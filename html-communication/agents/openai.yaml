@@ -1,0 +1,4 @@
+interface:
+  display_name: "HTML Communication"
+  short_description: "Present plans and reports as readable HTML"
+  default_prompt: "Use $html-communication to present this write-up as a readable HTML document."
