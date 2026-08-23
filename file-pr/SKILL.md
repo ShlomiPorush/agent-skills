@@ -24,7 +24,8 @@ File a review-ready pull request without merging or deploying it. Treat the repo
    - Apply one or more `area: *` labels, exactly one `priority: *` label, and at least one nature label such as `bug`, `security`, `testing`, `performance`, `data-integrity`, `enhancement`, `dependencies`, or `documentation`.
    - Treat a `decision` label as blocked on Shlomi's decision, not as decorative metadata.
    - Use a `feature/` or `fix/` branch.
-   - Write issue and PR discussion in Hebrew. Write code, commit messages, code comments, and PR titles in English.
+   - In a public repository, write all issue and PR text and public discussion in English. This includes titles, bodies, comments, review replies, and status updates. Do not use Hebrew in public repository content.
+   - In a private repository, write issue and PR discussion in Hebrew. Write code, commit messages, code comments, and PR titles in English.
 4. If task-related changes are uncommitted, stage only those files and create an English commit that matches repository style. Never discard, rewrite, or bundle unrelated user changes.
 5. Push the branch and set its upstream when needed. Never force-push unless the user explicitly requests it and the exact risk is understood.
 
@@ -40,7 +41,7 @@ File a review-ready pull request without merging or deploying it. Treat the repo
 1. Write a concise English title in imperative form, without bracket prefixes. Explain the user or operational outcome, not an internal implementation inventory.
    - Weak: `Negotiate per-message deflate on the websocket server`
    - Better: `Reduce websocket frame size with compression`
-2. Begin the body with `## בשפה פשוטה` and a short Hebrew paragraph that explains the problem in ordinary language.
+2. In a public repository, begin the body with `## Plain language` and a short English paragraph that explains the problem in ordinary language. In a private repository, begin with `## בשפה פשוטה` and write that paragraph in Hebrew.
 3. Briefly explain the solution after the problem. Keep implementation inventories secondary.
 4. Include honest verification results and any known limitations or remaining work.
 5. Include `Closes #N` for the associated issue.
