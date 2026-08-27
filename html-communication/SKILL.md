@@ -21,7 +21,7 @@ description: Create plans, specifications, write-ups, finding summaries, reports
 
 ## Publish and iterate
 
-- Upload the HTML file to PostPlan when available. Otherwise use an available public file host.
-- Preserve the same hosted item and URL across iterations by updating the existing file rather than publishing a new one.
-- Return a link to the published document and identify the local HTML file when a local workspace copy exists.
+- Publish the HTML file through YAAPS using the `yaaps` skill. Do not upload it to any other host.
+- The first publish creates a draft; note its draft ID and public URL. On later iterations publish a new version to that same draft with `--draft-id` so the public URL stays stable.
+- Return the draft's public URL and identify the local HTML file when a local workspace copy exists.
 - Do not open a browser to verify the HTML unless the user explicitly asks.
