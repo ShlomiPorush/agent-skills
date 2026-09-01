@@ -22,6 +22,8 @@ An ID copied from a T3 Code UI can be a T3 wrapper or conversation identifier ra
 
 T3's server state may contain an explicit provider mapping in `~/.t3/userdata/state.sqlite`. For a local, authorized lookup, query the exact T3 thread row and parse `provider_session_runtime.resume_cursor_json.threadId`; the bundled `scripts/resolve_t3_session.py` performs this read-only lookup. In one verified local example, the T3 thread ID resolved to the Codex rollout ID in that cursor. This is a T3 implementation detail, not a public cross-machine API, so validate the result against the provider's native session metadata. Do not parse or mutate T3's LevelDB/cache as a resolver, and do not infer a mapping when the cursor is absent.
 
+On Windows, use `scripts/resolve_t3_session.ps1`, which calls the system `winsqlite3.dll` and requires no Python, Node, or `sqlite3` installation. The Python helper remains an optional alternative where Python is already available.
+
 ## Official documentation
 
 - Claude Code session management: https://code.claude.com/docs/en/sessions

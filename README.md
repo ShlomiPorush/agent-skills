@@ -10,6 +10,8 @@ Personal [Agent Skills](https://code.claude.com/docs/en/skills) that work with b
 | [`html-communication`](html-communication/SKILL.md) | Presents plans, specs, reports, and UI mock comparisons as self-contained Hebrew HTML documents with correct right-to-left layout. |
 | [`session-transfer`](session-transfer/SKILL.md) | Classifies session IDs for same-platform resume and routes cross-platform moves through a safe handoff packet. |
 
+The T3 resolver includes a Windows PowerShell implementation using the system `winsqlite3.dll`; Python is not required. The Python implementation is an optional alternative on systems where Python is already installed.
+
 ## Third-party skills
 
 `install.ps1` also links a curated subset of [mattpocock/skills](https://github.com/mattpocock/skills), cloned as a **sibling** of this repo (never vendored, so upstream updates arrive with a `git pull`):

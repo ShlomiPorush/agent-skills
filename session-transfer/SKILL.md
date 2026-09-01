@@ -17,7 +17,7 @@ When the ID was copied from a T3 Code UI context menu, do not assume it is the C
 
 Do not rely on undocumented T3 LevelDB/cache files as a resolver. A raw occurrence of the T3 UUID there can be UI state, a project index, or cached content and does not establish a relation to a Codex rollout. Never match IDs by timestamp, filename proximity, or text similarity.
 
-T3 desktop/server installations may persist an explicit provider cursor in `~/.t3/userdata/state.sqlite`. When local access is authorized, use the read-only helper [scripts/resolve_t3_session.py](scripts/resolve_t3_session.py) with the T3 thread ID. It reads `provider_session_runtime.resume_cursor_json.threadId` for the exact `thread_id`; it does not scan transcripts or mutate the database. Treat a missing or stale cursor as no mapping, and verify the returned native ID against the provider's own session metadata before resuming.
+T3 desktop/server installations may persist an explicit provider cursor in `~/.t3/userdata/state.sqlite`. This resolver is T3-only; never run it for a bare Claude or Codex ID. On Windows, use the dependency-free PowerShell helper [scripts/resolve_t3_session.ps1](scripts/resolve_t3_session.ps1). On systems with Python, [scripts/resolve_t3_session.py](scripts/resolve_t3_session.py) is an optional alternative. Both read `provider_session_runtime.resume_cursor_json.threadId` for the exact `thread_id`; neither scans transcripts or mutates the database. Treat a missing or stale cursor as no mapping, and verify the returned native ID against the provider's own session metadata before resuming.
 
 Classify the request in this order:
 
