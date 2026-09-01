@@ -1,0 +1,4 @@
+interface:
+  display_name: "Session Transfer"
+  short_description: "Route session IDs to resume or safe cross-agent handoffs"
+  default_prompt: "Use $session-transfer to determine whether this session ID can be resumed or needs a handoff."

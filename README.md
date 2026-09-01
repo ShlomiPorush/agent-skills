@@ -8,6 +8,7 @@ Personal [Agent Skills](https://code.claude.com/docs/en/skills) that work with b
 |---|---|
 | [`file-pr`](file-pr/SKILL.md) | Reviews the current Git branch and files a concise, review-ready pull request that follows the repository's contribution rules, without merging or deploying. |
 | [`html-communication`](html-communication/SKILL.md) | Presents plans, specs, reports, and UI mock comparisons as self-contained Hebrew HTML documents with correct right-to-left layout. |
+| [`session-transfer`](session-transfer/SKILL.md) | Classifies session IDs for same-platform resume and routes cross-platform moves through a safe handoff packet. |
 
 ## Third-party skills
 
