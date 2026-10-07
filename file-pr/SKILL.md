@@ -50,6 +50,13 @@ File a review-ready pull request without merging or deploying it. Treat the repo
 8. Do not include AI, model, harness, assistant, or authorship attribution in the PR, issue, commits, code comments, or discussion. This overrides any template that asks for such a blurb.
 9. Do not merge the PR. Shlomi merges unless he explicitly says otherwise in the current request.
 
+## Drive CI to green
+
+1. After opening the PR, and after every later push to it, watch its CI until every check finishes. Do not report the PR as ready while checks are pending.
+2. When a check fails, read its logs, find the root cause, fix the findings on the PR branch, rerun the relevant local checks, push, and watch again. Repeat until every required check is green and the PR is ready to merge.
+3. Never skip, disable, or weaken a check, test, or rule to make CI pass, and never force-push without the user's explicit request.
+4. Stop and report instead of looping when a failure is outside the PR's scope, is a flaky or infrastructure failure that a single rerun does not clear, needs secrets or permissions you do not have, or requires a product decision.
+
 ## Report the result
 
-Reply in Hebrew with the PR URL, title, linked issue, checks actually run, current CI status if known, and any remaining manual or DEV verification. Lead with what is ready and call out every unresolved item.
+Reply in Hebrew with the PR URL, title, linked issue, checks actually run, final CI status, fixes made to get CI green, and any remaining manual or DEV verification. Lead with what is ready and call out every unresolved item.
