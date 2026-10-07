@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Map"
+  short_description: "Draw a living status map of the project"
+  default_prompt: "Use $project-map to draw or update the map of this project."

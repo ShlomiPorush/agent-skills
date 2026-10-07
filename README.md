@@ -8,6 +8,7 @@ Personal [Agent Skills](https://code.claude.com/docs/en/skills) that work with b
 |---|---|
 | [`file-pr`](file-pr/SKILL.md) | Reviews the current Git branch and files a concise, review-ready pull request that follows the repository's contribution rules, without merging or deploying. |
 | [`html-communication`](html-communication/SKILL.md) | Presents plans, specs, reports, and UI mock comparisons as self-contained Hebrew HTML documents with correct right-to-left layout. |
+| [`project-map`](project-map/SKILL.md) | Draws and updates a self-contained Hebrew HTML map of the project: its main parts, the status of each part with evidence, blockers, progress toward the next milestone, open decisions, and the recommended next step. |
 | [`session-transfer`](session-transfer/SKILL.md) | Classifies session IDs for same-platform resume and routes cross-platform moves through a safe handoff packet. For T3 IDs, its Windows resolver uses the system `winsqlite3.dll`; Python is not required. |
 
 ## Third-party skills
