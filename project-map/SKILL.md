@@ -91,6 +91,8 @@ Set `blockedOn` to `null` unless `status` is `blocked`. Preserve user edits. If 
 - Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<skill-directory>/scripts/check-map.ps1" <command>`
 - macOS and Linux: `pwsh -NoProfile -File "<skill-directory>/scripts/check-map.ps1" <command>`
 
+Resolve `<skill-directory>` to this skill's installed directory and keep it quoted.
+
 Commands:
 
 - `embed-fonts` replaces the font marker, or a previous embed, in `.project-map/index.html` with the Heebo `@font-face` rules. Never write the base64 by hand.
