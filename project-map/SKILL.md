@@ -81,7 +81,22 @@ Set `blockedOn` to `null` unless `status` is `blocked`. Preserve user edits. If 
 5. Record product decisions the agent may not make on its own as `open` decisions, with options and a recommendation. Do not pick a default and proceed. Work that depends on an open decision stays blocked, and only independent work continues. A pending merge, review, or release that the user owns is a dependency, not a decision.
 6. Choose one concrete next step that does not depend on an open decision.
 7. Compare with the previous state to find what changed: new parts, status changes, reached milestones, answered decisions, and the commit range since `lastCommit`. On the first run there is nothing to compare; say that this is the first map, name its baseline commit, and highlight parts with uncommitted changes instead. Uncommitted changes count as evidence for status, but list them separately from the commit range.
-8. Write `state.json`, then render `index.html` from it.
+8. Write `state.json`, then render `index.html` from it with `/* project-map:fonts */` inside its `<style>` element, and run `embed-fonts`.
+9. Run `check`. Fix every reported problem in `state.json` or the page, then run `check` again. Report the map only after it passes.
+
+## Scripts
+
+`scripts/check-map.ps1` runs from the repository root and needs no installs on Windows. On macOS or Linux it needs PowerShell 7 (`pwsh`); if it is missing, ask the user before installing it ([instructions](https://learn.microsoft.com/powershell/scripting/install/installing-powershell)).
+
+- Windows: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<skill-directory>/scripts/check-map.ps1" <command>`
+- macOS and Linux: `pwsh -NoProfile -File "<skill-directory>/scripts/check-map.ps1" <command>`
+
+Resolve `<skill-directory>` to this skill's installed directory and keep it quoted.
+
+Commands:
+
+- `embed-fonts` replaces the font marker, or a previous embed, in `.project-map/index.html` with the Heebo `@font-face` rules. Never write the base64 by hand.
+- `check` validates `state.json` and `index.html` against the rules in this skill. It exits non-zero and lists each problem when something fails.
 
 ## The page
 
@@ -99,7 +114,7 @@ Then the parts, each with its status, one-line summary, evidence, and what it wa
 - Produce exactly one self-contained HTML file no larger than 512 KB. Embed all CSS, scripts, icons, and data. The page must work from `file://`, so embed the state data in the page and do not fetch `state.json` or anything else at runtime.
 - Write all visible prose in Hebrew. Use `<html lang="he" dir="rtl">` and CSS logical properties. Isolate English names, code, paths, commit hashes, and numbers with `dir="ltr"` or `<bdi>` where needed. Evidence items such as commit references, paths, and tool output may stay in their original language.
 - Use Heebo for all text, including headings. Create hierarchy with size and weight only. Code, paths, and commit hashes may use a monospace font.
-- Embed Heebo from this skill's `assets/fonts/` as base64 `@font-face` rules with family `"Heebo Variable"`, `font-weight: 100 900`, and format `woff2-variations`. Use `heebo-hebrew-wght-normal.woff2` with `unicode-range: U+0307-0308,U+0590-05FF,U+200C-2010,U+20AA,U+25CC,U+FB1D-FB4F` and `heebo-latin-wght-normal.woff2` with `unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD`. Fall back to `Heebo, system-ui, sans-serif`. The fonts are licensed under `assets/fonts/OFL.txt`.
+- Embed Heebo from this skill's `assets/fonts/` with `embed-fonts`, which declares the family `"Heebo Variable"`. Use `font-family: "Heebo Variable", Heebo, system-ui, sans-serif`. The fonts are licensed under `assets/fonts/OFL.txt`.
 - Support light and dark themes through `prefers-color-scheme`. Use large, confident typography and clear status colors that remain distinguishable without color through labels or icons. Avoid purple.
 - Make it readable on a laptop and on a phone.
 - Do not use the dash characters U+2010 through U+2015 or U+2212 in visible prose. The Hebrew maqaf is allowed.
@@ -108,4 +123,4 @@ Then the parts, each with its status, one-line summary, evidence, and what it wa
 
 ## Reporting back
 
-After each update, reply briefly with: the path to `index.html`, the next milestone and how much remains, the recommended next step, any open decisions, and whether `.project-map/` still needs to be ignored.
+After each update, reply briefly with: the path to `index.html`, whether `check` passed, the next milestone and how much remains, the recommended next step, any open decisions, and whether `.project-map/` still needs to be ignored.
