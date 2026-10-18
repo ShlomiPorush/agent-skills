@@ -1,0 +1,12 @@
+{
+  "instanceId": "codex-monthly",
+  "driver": "codex",
+  "auth": { "status": "authenticated", "type": "oauth", "email": "fixture-user@example.invalid", "label": "FIXTURE-SECRET" },
+  "usageLimits": {
+    "checkedAt": "2026-01-05T12:00:00Z",
+    "windows": [
+      { "id": "primary", "kind": "monthly", "label": "Monthly", "usedPercent": 85, "windowDurationMins": 43200, "resetsAt": "2026-02-04T14:00:00+02:00" }
+    ],
+    "resetCredits": []
+  }
+}

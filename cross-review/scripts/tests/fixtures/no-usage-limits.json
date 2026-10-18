@@ -1,0 +1,6 @@
+{
+  "instanceId": "no-usage-limits",
+  "enabled": false,
+  "auth": { "status": "authenticated", "type": "oauth", "email": "fixture-user@example.invalid", "label": "FIXTURE-SECRET" },
+  "checkedAt": "2026-01-05T12:00:00Z"
+}

@@ -1,0 +1,12 @@
+{
+  "instanceId": "codex-weekly-only",
+  "driver": "codex",
+  "auth": { "status": "authenticated", "type": "oauth", "email": "fixture-user@example.invalid", "label": "FIXTURE-SECRET" },
+  "usageLimits": {
+    "checkedAt": "2026-01-05T12:00:00Z",
+    "windows": [
+      { "id": "primary", "kind": "weekly", "label": "Weekly", "usedPercent": 90, "windowDurationMins": 10080, "resetsAt": "2026-01-07T12:00:00Z" }
+    ],
+    "resetCredits": []
+  }
+}
