@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cross Review"
+  short_description: "Have the other provider's agent review plans and results"
+  default_prompt: "Use $cross-review to decide the review tier and get a partner review for this work."

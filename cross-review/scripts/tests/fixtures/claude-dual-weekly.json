@@ -1,0 +1,15 @@
+{
+  "instanceId": "claude-dual-weekly",
+  "driver": "claudeAgent",
+  "auth": { "status": "authenticated", "type": "oauth", "email": "fixture-user@example.invalid", "label": "FIXTURE-SECRET" },
+  "checkedAt": "2026-01-05T12:00:00.123Z",
+  "usageLimits": {
+    "checkedAt": "2026-01-05T12:00:00.123Z",
+    "windows": [
+      { "id": "five_hour", "kind": "session", "label": "Session", "windowDurationMins": 300, "usedPercent": 100, "resetsAt": "2026-01-05T15:00:00Z" },
+      { "id": "seven_day", "kind": "weekly", "label": "Weekly", "windowDurationMins": 10080, "usedPercent": 10, "resetsAt": "2026-01-10T12:00:00Z" },
+      { "id": "seven_day_fable", "kind": "weekly", "label": "Weekly \u00b7 Fable", "windowDurationMins": 10080, "usedPercent": 99, "resetsAt": "2026-01-10T12:00:00Z" }
+    ],
+    "resetCredits": []
+  }
+}
