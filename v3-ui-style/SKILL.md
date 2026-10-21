@@ -1,9 +1,20 @@
 ---
 name: v3-ui-style
-description: Replicate the mailcow Logs Viewer v3 design system in another project, both its look (tokens, type, layout, components, light and dark) and its behaviors (dialogs and phone sheets, tables, forms and saving, search, navigation, live data, feedback), with the v3 code bundled for reference. Use when the user, or the project's AGENTS.md or CLAUDE.md, says the UI follows the v3 style, the mailcow Logs Viewer v3 style or this skill, or asks to replicate that design. Do not use for UI work in a project that has not adopted it.
+description: Only for projects that adopted the mailcow Logs Viewer v3 style. Use it only when the project's AGENTS.md or CLAUDE.md says its UI follows v3-ui-style, the mailcow Logs Viewer v3 style or the v3 style or look, or the user asks for that design in this conversation. In any other UI task do not use it, do not open it and do not mention it. Being installed or listed, or a screen that resembles an admin or mail UI, is not adoption. Holds the v3 design rules, behaviors and bundled code.
 ---
 
 # v3 UI style
+
+## First: check that this design was adopted
+
+Apply this skill only when one of these is true:
+
+- a user instruction in this conversation asks for this design: `v3-ui-style`, the mailcow Logs Viewer v3 style, or the v3 style or look;
+- the AGENTS.md or CLAUDE.md that applies to the files you change says the UI follows one of those.
+
+Before you announce that you use this skill or read anything under `references/`, name the user instruction or quote the project line that adopts the design. If there is none, stop here and build the UI in the project's own design, or as the request asks. These are not adoption: the skill being installed or listed, a README or screen that looks like an admin or mail UI, a product version that happens to be called v3, and a mention made only to describe, review or exclude this skill.
+
+## About the style
 
 The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/mailcow-logs-viewer) v3 frontend: a dense, flat admin UI where the text colour is the accent and colour means status. The look is half of the style; the other half is how things behave. This skill holds both as rules, plus the v3 code they were taken from.
 
