@@ -11,6 +11,7 @@ Personal [Agent Skills](https://code.claude.com/docs/en/skills) that work with b
 | [`html-communication`](html-communication/SKILL.md) | Presents plans, specs, reports, and UI mock comparisons as self-contained Hebrew HTML documents with correct right-to-left layout. |
 | [`project-map`](project-map/SKILL.md) | Draws and updates a self-contained Hebrew HTML map of the project: its main parts, the status of each part with evidence, blockers, progress toward the next milestone, open decisions, and the recommended next step. A bundled PowerShell script embeds the fonts and validates every map before it is reported. |
 | [`session-transfer`](session-transfer/SKILL.md) | Classifies session IDs for same-platform resume and routes cross-platform moves through a safe handoff packet. For T3 IDs, its Windows resolver uses the system `winsqlite3.dll`; Python is not required. |
+| [`v3-ui-style`](v3-ui-style/SKILL.md) | Replicates the mailcow Logs Viewer v3 design system in another project: the look as tokens and component rules, and 218 behavior rules in 16 area files (dialogs and phone sheets, tables, forms, saving, search, navigation and more). The v3 frontend code the rules cite is bundled for reference. |
 
 ## Third-party skills
 
