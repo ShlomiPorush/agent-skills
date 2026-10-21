@@ -1,0 +1,2 @@
+# Verbatim copy of upstream code: keep its bytes and line numbers, skip whitespace checks
+* -whitespace

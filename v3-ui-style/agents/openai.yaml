@@ -1,0 +1,4 @@
+interface:
+  display_name: "v3 UI Style"
+  short_description: "Replicate the mailcow Logs Viewer v3 look and behaviors"
+  default_prompt: "Use $v3-ui-style to build this UI in the mailcow Logs Viewer v3 style."
