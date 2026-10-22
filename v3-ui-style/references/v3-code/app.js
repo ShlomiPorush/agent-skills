@@ -1175,31 +1175,37 @@ function hasDataChanged(newData, cacheKey) {
 }
 
 // Smart refresh for Messages - only update if new messages arrived
-// Only refreshes if there are no active filters/search (to avoid disrupting user's view)
+// Only refreshes if there are no active filters/search (to avoid disrupting user's view),
+// while nothing else loads the list, and only the first page: it would take away more
 async function smartRefreshMessages() {
     const filters = currentFilters.messages || {};
 
     // Don't refresh if user has active search or filters
     const hasActiveFilters = filters.search || filters.sender || filters.recipient ||
         filters.direction || filters.status || filters.user || filters.ip;
-
-    // Don't refresh if user is not on first page
-    if (hasActiveFilters || currentPage.messages > 1) {
-        return; // Skip refresh to avoid disrupting user's view
-    }
+    const busy = () => messagesFullLoad || messagesPaging.loading || currentPage.messages > 1;
+    if (hasActiveFilters || messagesRefreshing || busy()) return;
 
     // The same query as the list, so a time range stays applied
-    const params = messagesQueryParams(currentPage.messages);
-
-    const response = await authenticatedFetch(`/api/messages?${params}`);
-    if (!response.ok) return;
-
-    const data = await response.json();
-
-    if (hasDataChanged(data, 'messages')) {
-        console.log('[REFRESH] Messages data changed, updating UI');
-        lastDataCache.messages = data;
-        renderMessagesData(data);
+    const gen = messagesGen;
+    messagesRefreshing = true;
+    try {
+        const response = await messagesFetch(`/api/messages?${messagesQueryParams()}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        // Meanwhile the list was loaded again, or more of it is shown
+        if (gen !== messagesGen || busy()) return;
+        if (hasDataChanged(data, 'messages')) {
+            console.log('[REFRESH] Messages data changed, updating UI');
+            // A list drawn again is a new one, and its counts with it
+            const now = messagesNewGeneration();
+            renderMessagesData(data);
+            loadMessageFacets(filters, now);
+        }
+    } catch (error) {
+        if (error.name !== 'AbortError') console.error('Messages refresh failed:', error);
+    } finally {
+        messagesRefreshing = false;
     }
 }
 
@@ -1210,7 +1216,7 @@ async function smartRefreshMessages() {
 function renderMessageRow(msg) {
     const tone = messageRowTone(msg);
     return `
-        <div class="ui-msg-item${tone ? ` ui-msg-${tone}` : ''}" data-key="${escapeHtml(msg.correlation_key || '')}" role="button" tabindex="0" data-row-open onclick="if (!uiRowHeld(event)) viewMessageDetails('${escapeJsArg(msg.correlation_key)}')">
+        <div class="ui-msg-item${tone ? ` ui-msg-${tone}` : ''}" data-key="${escapeHtml(msg.correlation_key || '')}"${msg.message_id ? ` data-mid="${encodeURIComponent(msg.message_id)}"` : ''} role="button" tabindex="0" data-row-open onclick="if (!uiRowHeld(event)) viewMessageDetails('${escapeJsArg(msg.correlation_key)}')">
             <div class="ui-msg-l1">
                 <b class="ui-msg-from">${escapeHtml(msg.sender || 'Unknown')}</b>
                 <time title="${escapeHtml(formatTime(msg.first_seen))}">${formatListTime(msg.first_seen)}</time>
@@ -1237,37 +1243,113 @@ function messageRowTone(msg) {
 function renderMessagesData(data) {
     const container = document.getElementById('messages-logs');
     if (!container) return;
-
-    if (!data.data || data.data.length === 0) {
-        container.innerHTML = '<p class="ui-empty">No messages found</p>';
-        return;
-    }
-
-    renderMessagesList(container, data);
+    showMessagesFirstPage(container, data);
     if (typeof markSelectedMessageRow === 'function' && window.openMessageKey) markSelectedMessageRow(window.openMessageKey);
 }
 
-// ---------- Messages list: the next page loads as the end scrolls into view ----------
-const messagesPaging = { page: 1, pages: 1, total: 0, loading: false, observer: null };
+// A first page of the list, from a full load or the auto refresh: the rows (or
+// "No messages found"), the count, where the next page starts, and the answer
+// the refresh compares the next one with
+function showMessagesFirstPage(container, data) {
+    lastDataCache.messages = data;
+    const rows = data.data || [];
+    messagesPaging.page = 1;
+    messagesPaging.total = data.total || rows.length;
+    messagesPaging.cursor = rows.length ? data.next_cursor || null : null;
+    currentPage.messages = 1;
+    setMessagesCount(messagesPaging.total);
+    if (!rows.length) {
+        container.innerHTML = '<p class="ui-empty">No messages found</p>';
+        return;
+    }
+    renderMessagesList(container, data);
+}
 
-function messagesQueryParams(page) {
+function setMessagesCount(total) {
+    const countEl = document.getElementById('messages-count');
+    if (countEl) countEl.textContent = total === null ? '' : uiCountLabel(total || 0, 'message', 'messages');
+}
+
+// ---------- Messages list: the next page loads as the end scrolls into view ----------
+// page: pages shown; cursor: where the next page starts (null at the end);
+// failed: the last page could not load, until Try again
+const messagesPaging = { page: 1, pages: 1, total: 0, cursor: null, loading: false, failed: false, observer: null };
+// One list at a time. Every full load, and every redraw by the auto refresh,
+// starts a new generation: the requests of the older one are aborted (so none
+// of them holds up the new list), and their answers and errors are dropped.
+let messagesGen = 0;
+let messagesFullLoad = false;      // a full load is on its way
+let messagesRefreshing = false;    // an auto refresh is on its way
+const messagesRequests = new Set();
+
+function messagesNewGeneration() {
+    messagesGen++;
+    messagesRequests.forEach(control => control.abort());
+    messagesRequests.clear();
+    messagesPaging.loading = false;
+    messagesPaging.failed = false;
+    return messagesGen;
+}
+
+// A request of the list's and its answer, read in full while it can still be
+// aborted (a new generation aborts it, also while its body is coming in)
+async function messagesFetch(url) {
+    const control = typeof AbortController === 'function' ? new AbortController() : null;
+    if (control) messagesRequests.add(control);
+    try {
+        const response = await authenticatedFetch(url, control ? { signal: control.signal } : {});
+        const data = response.ok ? await response.json() : null;
+        return { ok: response.ok, status: response.status, statusText: response.statusText, json: async () => data };
+    } finally {
+        if (control) messagesRequests.delete(control);
+    }
+}
+
+// The list's query; with a cursor, the page that starts after it
+function messagesQueryParams(cursor = null) {
     const filters = currentFilters.messages || {};
-    const params = new URLSearchParams({ page: page, limit: 50 });
+    const params = new URLSearchParams({ page: 1, limit: 50 });
     for (const key of ['search', 'sender', 'recipient', 'direction', 'user', 'status', 'ip', 'start_date', 'end_date']) {
         if (filters[key]) params.append(key, filters[key]);
     }
+    if (messagesOrder === 'asc') params.append('order', 'asc');
+    if (cursor) params.append('cursor', cursor);
     return params;
 }
 
+// The Messages list's order, by the time each message was first seen: its Sort
+// button beside the search offers newest first (as it arrives) or oldest first.
+// An order is not a filter: clearing the filters keeps it.
+let messagesOrder = 'desc';
+function renderMessagesSort() {
+    const slot = document.getElementById('messages-sort');
+    if (!slot) return;
+    if (!slot.querySelector('.ui-picker')) {
+        const choice = (value, text) => `<label class="ui-sort-opt"><input type="radio" name="messages-order" value="${value}" onchange="setMessagesOrder(this.value)"><span>${text}</span></label>`;
+        slot.innerHTML = uiPicker({ id: 'messages-sort-menu', label: 'Sort', icon: true, panelLabel: 'Sort messages', panelClass: 'ui-sort-panel',
+            panel: `<fieldset class="ui-sort-group"><legend>Time</legend>${choice('desc', 'Newest first')}${choice('asc', 'Oldest first')}</fieldset>` });
+    }
+    const said = `Sort: ${messagesOrder === 'asc' ? 'Oldest first' : 'Newest first'}`;
+    const button = slot.querySelector('.ui-picker-btn');
+    button.setAttribute('aria-label', said);
+    button.title = said;
+    button.classList.toggle('is-set', messagesOrder === 'asc');
+    slot.querySelectorAll('input[name="messages-order"]').forEach(r => { r.checked = r.value === messagesOrder; });
+}
+// Shown with the page, before its list arrives
+document.addEventListener('DOMContentLoaded', renderMessagesSort);
+function setMessagesOrder(order) {
+    messagesOrder = order === 'asc' ? 'asc' : 'desc';
+    renderMessagesSort();
+    loadMessages();
+}
+
 function messagesMoreText() {
-    if (messagesPaging.page < messagesPaging.pages) return 'Loading more...';
+    if (messagesPaging.cursor) return 'Loading more...';
     return messagesPaging.total ? `All ${messagesPaging.total} messages shown` : '';
 }
 
 function renderMessagesList(container, data) {
-    messagesPaging.page = data.page || 1;
-    messagesPaging.pages = data.pages || 1;
-    messagesPaging.total = data.total || data.data.length;
     container.innerHTML = `
         <div class="ui-msg-list">${data.data.map(renderMessageRow).join('')}</div>
         <p id="messages-more" class="ui-msg-more" aria-live="polite">${messagesMoreText()}</p>
@@ -1287,34 +1369,49 @@ function watchMessagesEnd(container) {
     messagesPaging.observer.observe(sentinel);
 }
 
-async function loadMoreMessages() {
-    if (messagesPaging.loading || messagesPaging.page >= messagesPaging.pages) return;
+// The next page, after the last message shown. A page that fails says so with
+// Try again and waits for it; it does not ask again by itself.
+async function loadMoreMessages(retry = false) {
+    if (retry) messagesPaging.failed = false;
+    if (messagesPaging.loading || messagesPaging.failed || !messagesPaging.cursor) return;
     const list = document.querySelector('#messages-logs .ui-msg-list');
-    const more = document.getElementById('messages-more');
     if (!list) return;
     messagesPaging.loading = true;
-    const next = messagesPaging.page + 1;
+    const gen = messagesGen;
     try {
-        const response = await authenticatedFetch(`/api/messages?${messagesQueryParams(next)}`);
+        const response = await messagesFetch(`/api/messages?${messagesQueryParams(messagesPaging.cursor)}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        // New mail can shift a page; never show the same message twice
+        // The list was loaded again meanwhile: this page is not part of it
+        if (gen !== messagesGen) return;
+        // Never show a message twice: by its row, and by its Message-ID (another of
+        // its deliveries may stand for it now, when the first one was cleaned up)
         const seen = new Set([...list.querySelectorAll('.ui-msg-item[data-key]')].map(row => row.dataset.key));
-        list.insertAdjacentHTML('beforeend', (data.data || []).filter(msg => !seen.has(msg.correlation_key || '')).map(renderMessageRow).join(''));
-        messagesPaging.page = next;
-        messagesPaging.pages = data.pages || messagesPaging.pages;
-        currentPage.messages = next;
+        const ids = new Set([...list.querySelectorAll('.ui-msg-item[data-mid]')].map(row => row.dataset.mid));
+        list.insertAdjacentHTML('beforeend', (data.data || []).filter(msg => !seen.has(msg.correlation_key || '') && !(msg.message_id && ids.has(encodeURIComponent(msg.message_id)))).map(renderMessageRow).join(''));
+        messagesPaging.page += 1;
+        currentPage.messages = messagesPaging.page;
+        messagesPaging.cursor = data.next_cursor || null;
+        // The count as it is now, not as it was when the list was drawn
+        messagesPaging.total = data.total ?? messagesPaging.total;
+        setMessagesCount(messagesPaging.total);
+        const more = document.getElementById('messages-more');
         if (more) more.textContent = messagesMoreText();
         if (typeof markSelectedMessageRow === 'function' && window.openMessageKey) markSelectedMessageRow(window.openMessageKey);
     } catch (error) {
-        if (more) more.innerHTML = `Could not load more messages. <button type="button" class="ui-link-row ui-link" onclick="loadMoreMessages()">Try again</button>`;
+        // An error for an older list, or its request aborted, says nothing about the one shown
+        if (gen !== messagesGen) return;
+        messagesPaging.failed = true;
+        const more = document.getElementById('messages-more');
+        if (more) more.innerHTML = `Could not load more messages. <button type="button" class="ui-link-row ui-link" onclick="loadMoreMessages(true)">Try again</button>`;
     } finally {
-        messagesPaging.loading = false;
+        if (gen === messagesGen) messagesPaging.loading = false;
     }
-    // A short page may leave the end still in view
+    if (gen !== messagesGen || messagesPaging.failed) return;
+    // A short page may leave the end still in view (only while the list is on the screen)
     const sentinel = document.getElementById('messages-more');
     const container = document.getElementById('messages-logs');
-    if (sentinel && container && messagesPaging.page < messagesPaging.pages) {
+    if (sentinel && container && messagesPaging.cursor && sentinel.getClientRects().length) {
         const r = sentinel.getBoundingClientRect();
         const box = container.getBoundingClientRect();
         if (r.top < Math.max(box.bottom, window.innerHeight) + 600) loadMoreMessages();
@@ -1656,25 +1753,12 @@ async function smartRefreshQuarantine() {
 // Smart refresh for Dashboard
 async function smartRefreshDashboard() {
     try {
-        const response = await authenticatedFetch('/api/stats/dashboard');
-        if (!response.ok) return;
-
-        const data = await response.json();
-
-        if (hasDataChanged(data, 'dashboard')) {
-            console.log('[REFRESH] Dashboard data changed, updating UI');
-            lastDataCache.dashboard = data;
-
-            // Update stats without full reload
-            dashboardStats = data;
-            renderMailFlowStats();
-        }
-
-        // Also refresh recent activity and status summary
-        loadRecentActivity();
-        loadMailFlowChart();
+        refreshMailFlowChart();
         loadDashboardStatusSummary();
         loadDashboardSecurity();
+        // Needs attention: the alerts each time, the server checks (and the trends) every five minutes
+        loadDashboardSecurityAlerts();
+        if (Date.now() - dashboardChecksAt >= 300000) { loadDashboardAttention(); loadDashboardTrends(); }
     } catch (error) {
         console.error('Dashboard refresh error:', error);
     }
@@ -1899,30 +1983,23 @@ async function refreshAllData() {
 async function loadDashboard() {
     try {
         console.log('Loading Dashboard...');
-
-        const response = await authenticatedFetch('/api/stats/dashboard');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        console.log('Dashboard data:', data);
-
-        dashboardStats = data;
-        renderMailFlowStats();
-
-        loadRecentActivity();
         loadDashboardStatusSummary();
         loadDashboardBlacklistSummary();
         loadDashboardHealth();
         loadDashboardSecurityAlerts();
         loadDashboardAttention();
         loadDashboardSecurity();
+        loadDashboardTrends();
         loadMailFlowChart();
     } catch (error) {
         console.error('Failed to load dashboard:', error);
     }
 }
+
+// The alerts Needs attention shows (by id, for the words of an Undo), and every
+// open alert the last list had: Dismiss all changes those and no alert that came after
+const dashboardAlerts = new Map();
+let dashboardOpenAlertIds = [];
 
 async function loadDashboardSecurityAlerts() {
     const container = document.getElementById('dashboard-security-alerts');
@@ -1930,21 +2007,31 @@ async function loadDashboardSecurityAlerts() {
     const dismissAll = document.getElementById('dashboard-dismiss-all');
     try {
         const response = await authenticatedFetch('/api/security-alerts?acknowledged=false&limit=20');
-        if (!response.ok) { container.classList.add('hidden'); updateAttentionState(); return; }
+        if (!response.ok) { container.classList.add('hidden'); updateAttentionState(); return false; }
         const data = await response.json();
         const alerts = data.alerts || [];
+        dashboardAlerts.clear();
+        alerts.forEach(a => dashboardAlerts.set(Number(a.id), a));
+        dashboardOpenAlertIds = data.unacknowledged_ids || alerts.map(a => Number(a.id));
+        if (dismissAll) {
+            const count = dashboardOpenAlertIds.length, n = count.toLocaleString();
+            // "Dismiss all 25 alerts"; one alone is "Dismiss 1 alert" (a narrow panel drops the last word)
+            const words = count === 1 ? ['Dismiss 1', 'alert'] : [`Dismiss all ${n}`, 'alerts'];
+            dismissAll.innerHTML = `${words[0]}<span class="ui-attn-wide">&nbsp;${words[1]}</span>`;
+            dismissAll.setAttribute('aria-label', words.join(' '));
+        }
         if (alerts.length === 0) {
             container.classList.add('hidden');
-            container.innerHTML = '';
-            if (dismissAll) dismissAll.classList.add('hidden');
+            uiReplaceKeepingFocus(container, '');
+            if (dismissAll) dismissAll.classList.add('is-off');
             updateAttentionState();
-            return;
+            return true;
         }
 
-        container.innerHTML = alerts.map(a => {
+        uiReplaceKeepingFocus(container, alerts.map(a => {
             const critical = a.severity === 'critical';
             return `
-                <div class="ui-alert ui-alert-go ${critical ? 'ui-alert-fail' : 'ui-alert-warn'}" onclick="if (uiAlertRowClick(event)) openAlertActivity(${Number(a.id)})">
+                <div class="ui-alert ui-alert-go ${critical ? 'ui-alert-fail' : 'ui-alert-warn'}" data-key="alert-${Number(a.id)}" onclick="if (uiAlertRowClick(event)) openAlertActivity(${Number(a.id)})">
                     <span class="ui-alert-bar"></span>
                     <div class="ui-alert-text">
                         <div class="ui-alert-title">
@@ -1959,14 +2046,17 @@ async function loadDashboardSecurityAlerts() {
                         <button type="button" onclick="acknowledgeSecurityAlert(${Number(a.id)})" class="ui-btn ui-btn-sm" title="Dismiss">Dismiss</button>
                     </div>
                 </div>`;
-        }).join('');
+        }).join(''));
         container.classList.remove('hidden');
-        if (dismissAll) dismissAll.classList.remove('hidden');
+        if (dismissAll) dismissAll.classList.remove('is-off');
     } catch (e) {
         console.warn('Failed to load security alerts:', e);
         container.classList.add('hidden');
+        updateAttentionState();
+        return false;
     }
     updateAttentionState();
+    return true;
 }
 
 // A Needs attention row whose action opens a popup opens it from anywhere on
@@ -1975,7 +2065,9 @@ function uiAlertRowClick(event) {
     return !event.target.closest('button, a') && !uiRowHeld(event);
 }
 
-// The count and the "all clear" line of Needs attention follow what is in it
+// The count and the "all clear" line of Needs attention follow what is in it;
+// the line under it says how many items are shown when they do not all fit,
+// and the fade at the foot stays while more is below
 function updateAttentionState() {
     const panel = document.getElementById('dashboard-attention-panel');
     if (!panel) return;
@@ -1984,12 +2076,59 @@ function updateAttentionState() {
     if (count) count.textContent = rows ? String(rows) : '';
     const clear = document.getElementById('dashboard-attention-clear');
     if (clear) clear.classList.toggle('hidden', rows > 0);
+    const scroll = document.getElementById('dashboard-attention-scroll');
+    const more = document.getElementById('dashboard-attention-more');
+    if (!scroll) return;
+    const overflows = scroll.scrollHeight > scroll.clientHeight + 1;
+    scroll.classList.toggle('has-more', overflows && scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 2);
+    scroll.tabIndex = overflows ? 0 : -1;
+    if (more) {
+        // Always in its place, so the panel keeps its size; seen only when more is below
+        more.classList.toggle('is-off', !overflows);
+        more.textContent = overflows ? `${uiCountLabel(rows, 'item', 'items')}. Scroll the list for the rest` : '\u00a0';
+    }
+}
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('scroll', event => {
+        if (event.target instanceof Element && event.target.id === 'dashboard-attention-scroll') updateAttentionState();
+    }, true);
+    window.addEventListener('resize', () => updateAttentionState());
+}
+
+// Replace what a box shows, only when it changed, keeping the focus where it
+// was (the same item and action, else the item next to it, else the box) and
+// the box's scroll; a focus outside the box is left alone
+function uiReplaceKeepingFocus(container, html) {
+    if (container.dataset.shown === html) return false;
+    const active = document.activeElement;
+    let keep = null;
+    if (active && container.contains(active)) {
+        const item = active.closest('[data-key]');
+        const items = [...container.querySelectorAll('[data-key]')];
+        keep = { key: item && item.dataset.key, action: active.textContent.trim(), at: Math.max(0, items.indexOf(item)) };
+    }
+    const scroller = container.closest('.ui-attn-scroll');
+    const top = scroller ? scroller.scrollTop : 0;
+    container.innerHTML = html;
+    container.dataset.shown = html;
+    if (scroller) scroller.scrollTop = top;
+    if (keep) {
+        const items = [...container.querySelectorAll('[data-key]')];
+        const same = keep.key ? items.find(i => i.dataset.key === keep.key) : null;
+        const item = same || items[Math.min(keep.at, items.length - 1)];
+        const buttons = item ? [...item.querySelectorAll('button')] : [];
+        const target = (same && buttons.find(b => b.textContent.trim() === keep.action)) || buttons[0] || scroller || null;
+        if (target) target.focus({ preventScroll: true });
+    }
+    return true;
 }
 
 // Server checks that need a look, each with the place to handle it
+let dashboardChecksAt = 0;
 async function loadDashboardAttention() {
     const container = document.getElementById('dashboard-attention');
     if (!container) return;
+    dashboardChecksAt = Date.now();
     const off = feature => (window.disabledFeatures || []).includes(feature);
     const get = async url => {
         try {
@@ -2055,149 +2194,573 @@ async function loadDashboardAttention() {
         items.push({ tone: 'info', title: `mailcow ${mailcowVersion.latest_version} is available`,
             detail: `You are running ${mailcowVersion.current_version}.`, action: 'Read changes', onclick: 'showMailcowUpdateModal()', popup: true });
     }
-    container.innerHTML = items.map(item => `
-        <div class="ui-alert ui-alert-${item.tone}${item.popup ? ' ui-alert-go' : ''}"${item.popup ? ` onclick="if (uiAlertRowClick(event)) ${item.onclick}"` : ''}>
+    uiReplaceKeepingFocus(container, items.map(item => `
+        <div class="ui-alert ui-alert-${item.tone}${item.popup ? ' ui-alert-go' : ''}" data-key="check-${escapeHtml(item.title)}"${item.popup ? ` onclick="if (uiAlertRowClick(event)) ${item.onclick}"` : ''}>
             <span class="ui-alert-bar"></span>
             <div class="ui-alert-text"><div class="ui-alert-title"><b>${escapeHtml(item.title)}</b></div><p>${escapeHtml(item.detail)}</p></div>
             <button type="button" class="ui-btn ui-btn-sm" onclick="${item.onclick}">${escapeHtml(item.action)}</button>
-        </div>`).join('');
+        </div>`).join(''));
     updateAttentionState();
 }
 
-// The dashboard's mail flow: the 24-hour figures, or those of one hour picked on the chart
-let dashboardStats = null;
-let mailFlowSlots = [];
-let mailFlowPicked = null; // start of the picked hour (ms), or null for all 24 hours
+// The dashboard's mail flow (/api/stats/flow): a period of 24 hours, 7 days or
+// 30 days in bars cut at the app's own hours, quarters of the day and days;
+// the four figures over the period, with the period before it under them, or
+// those of one bar picked on the chart. The chart zooms in time (uiTimeZoom):
+// a zoomed span asks the server again, in shorter bars as it narrows. A strip
+// under it (uiTimeOverview) shows the whole period with the span shown.
+// Two loaders: the period's own answer (its figures, the strip, the limits)
+// and the zoomed span's. One view revision tells both whether an answer still
+// belongs to what is shown: a change of period or of zoom makes an answer
+// asked before it stale, and it is dropped.
+const DASH_PERIODS = {
+    '24h': { name: '24 hours', last: 'last 24 hours', all: 'All 24 hours' },
+    '7d': { name: '7 days', last: 'last 7 days', all: 'All 7 days' },
+    '30d': { name: '30 days', last: 'last 30 days', all: 'All 30 days' },
+};
+const dashFlow = {
+    period: '24h',
+    data: null,      // the bars and totals shown
+    full: null,      // the period's own answer (the strip draws it, zoomed or not)
+    prev: null,      // the period before (no zoom)
+    limits: null,    // the period's span: how far the chart zooms out and moves
+    zoom: null,      // { from, to } (ms), a span inside the period
+    pick: null,      // a bar's start (ms)
+    view: 0,         // the view revision: up one at every change of period or zoom
+    periodGen: 0, periodControl: null, zoomGen: 0, zoomControl: null,
+    loadedAt: 0, zoomer: null, overview: null, previewing: false,
+    stale: false,    // an answer was set aside under a gesture: ask again when it ends
+    dataView: -1,    // the view revision the chart shows
+    failed: false,   // the last load failed: the next refresh tries again, zoomed or not
+};
 
 function mailFlowHour(t) {
     return formatInZone(t, { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// A click on a bar shows that hour's numbers; the same bar again, or All 24 hours, goes back
+// A span with the dates as the rest of the app writes them: "21/10/2026, 06:00 to 12:00",
+// "14/10/2026 to 16/10/2026" (the order of day and month follows the browser, as formatTime)
+function mailFlowSpan(from, to) {
+    const end = to - 1;
+    if (zonedDateString(from) === zonedDateString(end)) return `${formatDay(from)}, ${mailFlowHour(from)} to ${mailFlowHour(to)}`;
+    const whole = mailFlowHour(from) === '00:00' && mailFlowHour(to) === '00:00';
+    return whole ? `${formatDay(from)} to ${formatDay(end)}` : `${formatDay(from)}, ${mailFlowHour(from)} to ${formatDay(end)}, ${mailFlowHour(to)}`;
+}
+
+// The bar length for a span: an hour up to two days, six hours up to ten, else a day
+function mailFlowBucketFor(len) {
+    return len <= 48 * 3600000 ? 'hour' : len <= 10 * 86400000 ? '6h' : 'day';
+}
+
+function setDashFlowPeriod(period) {
+    if (!DASH_PERIODS[period]) return;
+    dashFlow.period = period;
+    dashFlow.zoom = null;
+    dashFlow.pick = null;
+    dashFlow.full = null;
+    dashFlow.view++;
+    document.querySelectorAll('#dashboard-flow-period button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.period === period)));
+    loadMailFlowChart();
+}
+
+// A click on a bar shows its numbers; the same bar again, or All, goes back
 function pickMailFlowHour(t) {
-    mailFlowPicked = t === null || mailFlowPicked === t ? null : t;
+    dashFlow.pick = t === null || dashFlow.pick === t ? null : t;
+    renderMailFlowStats();
+}
+
+// The buttons step by whole bars, so the server shows the span asked for:
+// in keeps the middle half of the bars, earlier and later move by half of them
+function dashFlowStep(step) {
+    const l = dashFlow.limits, d = dashFlow.data;
+    if (!l || !d) return;
+    if (step === 'reset') { dashFlowZoom(null); return; }
+    const bars = d.buckets.map(b => ({ s: Date.parse(b.start), e: Date.parse(b.end) }));
+    const n = bars.length;
+    if (!n) return;
+    const shown = { from: bars[0].s, to: bars[n - 1].e };
+    const len = shown.to - shown.from;
+    const k = Math.max(1, Math.floor(n / 2));
+    if (step === 'in') {
+        if (n < 2) return;
+        const i = Math.floor((n - k) / 2);
+        dashFlowZoom({ from: bars[i].s, to: bars[i + k - 1].e });
+    } else if (step === 'earlier') {
+        const from = Math.max(l.from, shown.from - (k < n ? bars[k].s - bars[0].s : len));
+        dashFlowZoom({ from, to: from + len });
+    } else if (step === 'later') {
+        const to = Math.min(l.to, shown.to + (k < n ? bars[n - 1].e - bars[n - 1 - k].e : len));
+        dashFlowZoom({ from: to - len, to });
+    } else {
+        dashFlowZoom(uiTimeZoomStep(shown, l, step));
+    }
+}
+
+function dashFlowZoom(span) {
+    const l = dashFlow.limits;
+    // Zoomed all the way out is no zoom
+    dashFlow.zoom = !span || (l && span.from <= l.from + 1 && span.to >= l.to - 1) ? null : { from: span.from, to: span.to };
+    dashFlow.pick = null;
+    dashFlow.view++;
+    dashFlow.stale = false;
+    // Back to the whole period: its answer is here already
+    if (!dashFlow.zoom && dashFlow.full) {
+        dashFlow.zoomGen++;
+        if (dashFlow.zoomControl) dashFlow.zoomControl.abort();
+        dashFlow.data = dashFlow.full;
+        dashFlow.failed = false;
+        renderMailFlowChart();
+        return;
+    }
+    loadMailFlowChart();
+}
+
+// A gesture on the chart or a drag on the strip is on: nothing is redrawn under it
+function mailFlowBusy() {
+    return dashFlow.previewing || !!(dashFlow.overview && dashFlow.overview.busy());
+}
+
+// A gesture or a strip drag ended with no new span: what was set aside under it is asked for now
+function mailFlowSettle() {
+    if (dashFlow.stale && !mailFlowBusy()) loadMailFlowChart();
+}
+
+function mailFlowGet(query, control) {
+    return authenticatedFetch(`/api/stats/flow?${query}`, control ? { signal: control.signal } : {}).then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    });
+}
+
+function mailFlowFailed() {
+    const chart = document.getElementById('dashboard-flow-chart');
+    if (!chart) return;
+    dashFlow.failed = true;
+    const failed = '<p class="ui-empty ui-text-fail ui-flow-failed">Could not load the mail flow. It tries again on the next refresh.</p>';
+    // In the chart's own frame, so the panel keeps its size; no gesture outlives the chart it was on
+    if (dashFlow.zoomer) { dashFlow.zoomer.destroy(); dashFlow.zoomer = null; }
+    dashFlow.previewing = false;
+    const view = chart.querySelector('.ui-flow-view');
+    if (view) view.innerHTML = failed;
+    else chart.innerHTML = mailFlowFrame(failed);
+}
+
+function loadMailFlowChart() {
+    const chart = document.getElementById('dashboard-flow-chart');
+    if (!chart) return;
+    // A gesture is on: it asks again when it ends
+    if (mailFlowBusy()) return;
+    dashFlow.stale = false;
+    // Before the first answer: the chart's whole frame, so the panel has its size from the start
+    if (!chart.querySelector('.ui-flow-view')) chart.innerHTML = mailFlowFrame('<p class="ui-empty ui-flow-failed" role="status">Loading...</p>');
+    if (dashFlow.zoom && dashFlow.full) loadMailFlowZoom();
+    else loadMailFlowPeriod();
+}
+
+// The period's own answer and the period before: the figures with no zoom, the
+// strip and the limits. Zoomed, only the strip and the limits follow it: the
+// zoom stays where it is, kept inside the new limits (dropped if nothing is left).
+async function loadMailFlowPeriod() {
+    const gen = ++dashFlow.periodGen;
+    if (dashFlow.periodControl) dashFlow.periodControl.abort();
+    const control = typeof AbortController === 'function' ? new AbortController() : null;
+    dashFlow.periodControl = control;
+    const period = dashFlow.period;
+    try {
+        const [data, prev] = await Promise.all([mailFlowGet(`period=${period}`, control), mailFlowGet(`period=${period}&previous=true`, control)]);
+        if (gen !== dashFlow.periodGen || period !== dashFlow.period) return;
+        dashFlow.full = data;
+        dashFlow.prev = prev;
+        dashFlow.loadedAt = Date.now();
+        dashFlow.limits = { from: Date.parse(data.from), to: Date.parse(data.to), min: 3600000 };
+        if (!dashFlow.zoom) {
+            // A gesture is on: the answer waits in full; the gesture's end draws (or asks again)
+            if (mailFlowBusy()) { dashFlow.stale = true; return; }
+            dashFlow.data = data;
+            dashFlow.failed = false;
+            renderMailFlowChart();
+            return;
+        }
+        const l = dashFlow.limits, z = dashFlow.zoom;
+        const from = Math.max(z.from, l.from), to = Math.min(z.to, l.to);
+        const moved = from !== z.from || to !== z.to;
+        if (mailFlowBusy()) {
+            // Under a gesture the zoom still moves inside the new limits; its end asks for it
+            if (moved) { dashFlow.zoom = to - from >= l.min ? { from, to } : null; dashFlow.view++; }
+            dashFlow.stale = true;
+            return;
+        }
+        if (moved) { dashFlowZoom(to - from >= l.min ? { from, to } : null); return; }
+        // A zoom made before this period's answer came (a period switch, then Zoom in): its own answer now
+        if (dashFlow.dataView !== dashFlow.view) { loadMailFlowZoom(); return; }
+        renderMailFlowOverview(true);
+    } catch (error) {
+        if (gen !== dashFlow.periodGen || (error && error.name === 'AbortError')) return;
+        // Under a gesture nothing is drawn: the gesture's end asks again
+        if (mailFlowBusy()) { dashFlow.failed = true; dashFlow.stale = true; return; }
+        // Zoomed, the strip keeps its last picture; the next refresh tries again
+        if (!dashFlow.zoom) mailFlowFailed();
+    }
+}
+
+// The zoomed span, in bars as short as it allows; the zoom becomes what the
+// server shows (it snaps to the nearest bar edges)
+async function loadMailFlowZoom() {
+    const z = dashFlow.zoom, view = dashFlow.view;
+    const gen = ++dashFlow.zoomGen;
+    if (dashFlow.zoomControl) dashFlow.zoomControl.abort();
+    const control = typeof AbortController === 'function' ? new AbortController() : null;
+    dashFlow.zoomControl = control;
+    const iso = t => new Date(t).toISOString();
+    try {
+        const data = await mailFlowGet(`from=${iso(z.from)}&to=${iso(z.to)}&bucket=${mailFlowBucketFor(z.to - z.from)}`, control);
+        if (gen !== dashFlow.zoomGen || view !== dashFlow.view) return;
+        if (mailFlowBusy()) { dashFlow.stale = true; return; }
+        dashFlow.data = data;
+        dashFlow.failed = false;
+        dashFlow.zoom = { from: Date.parse(data.from), to: Date.parse(data.to) };
+        const l = dashFlow.limits;
+        if (l) dashFlow.limits = { ...l, to: Math.max(l.to, dashFlow.zoom.to) };
+        // Snapped out to the whole period: that is no zoom (the period before and the refresh come back)
+        if (l && dashFlow.zoom.from <= l.from + 1 && dashFlow.zoom.to >= l.to - 1) dashFlow.zoom = null;
+        renderMailFlowChart();
+    } catch (error) {
+        if (gen !== dashFlow.zoomGen || view !== dashFlow.view || (error && error.name === 'AbortError')) return;
+        if (mailFlowBusy()) { dashFlow.failed = true; dashFlow.stale = true; return; }
+        mailFlowFailed();
+    }
+}
+
+// The auto refresh: the period every minute for 24 hours, every five minutes
+// for longer ones; zoomed, it refreshes the strip and leaves the zoom as it is
+function refreshMailFlowChart() {
+    if (mailFlowBusy()) return;
+    if (dashFlow.failed) { loadMailFlowChart(); return; }
+    const every = dashFlow.period === '24h' ? 60000 : 300000;
+    if (Date.now() - dashFlow.loadedAt >= every) loadMailFlowPeriod();
+}
+
+// The strip under the chart: the whole period, a window over the span shown.
+// alone: only the strip is drawn again (the zoomed chart stays), the focus kept
+function renderMailFlowOverview(alone = false) {
+    const strip = document.querySelector('#dashboard-flow-chart .ui-ov');
+    if (!strip) return;
+    const draw = () => {
+        if (dashFlow.overview) { dashFlow.overview.destroy(); dashFlow.overview = null; }
+        const full = dashFlow.full, l = dashFlow.limits;
+        if (!full || !l) { strip.innerHTML = ''; return; }
+        const bars = full.buckets.map(b => ({ s: Date.parse(b.start), e: Date.parse(b.end), v: b.clean + b.spam }));
+        const max = Math.max(1, ...bars.map(b => b.v));
+        const kept = full.kept_from ? Date.parse(full.kept_from) : null;
+        const i = kept === null ? -1 : bars.findIndex(b => kept < b.e);
+        const gone = kept === null || kept <= l.from ? 0 : i < 0 ? 1 : (i + Math.max(0, kept - bars[i].s) / (bars[i].e - bars[i].s)) / bars.length;
+        strip.innerHTML = `<div class="ui-ov-bars" aria-hidden="true">${bars.map(b => `<i style="height:${Math.max(6, b.v / max * 100)}%"></i>`).join('')}</div>`
+            + (gone ? `<div class="ui-ov-gone" style="width:${gone * 100}%" aria-hidden="true"></div>` : '');
+        const edges = bars.map(b => b.s).concat(l.to);
+        const big = dashFlow.period === '24h' ? 6 * 3600000 : dashFlow.period === '7d' ? 86400000 : 7 * 86400000;
+        dashFlow.overview = uiTimeOverview(strip, {
+            limits: () => dashFlow.limits,
+            span: () => dashFlow.zoom || dashFlow.limits,
+            snap: uiNearestLocalHour,
+            // One step is one bar of the strip; a big step is six hours on 24 hours, a day on 7 days, a week on 30 days
+            step: (t, dir, isBig) => (isBig ? t + dir * big
+                : dir > 0 ? (edges.find(e => e > t + 1) ?? l.to) : ([...edges].reverse().find(e => e < t - 1) ?? l.from)),
+            label: t => `${formatDay(t)}, ${mailFlowHour(t)}`,
+            change: span => dashFlowZoom(span),
+            idle: mailFlowSettle,
+        });
+    };
+    if (alone) uiRedrawKeepingFocus(strip, draw);
+    else draw();
+}
+
+// The foot under the chart: the legend, the zoom buttons and the actions, all
+// always there (what is not in use keeps its place), so the panel keeps its size
+function mailFlowFoot(can) {
+    const off = on => (on ? '' : ' disabled');
+    return `<div class="ui-flow-foot">
+            <div class="ui-flow-legend"><span><i class="ui-flow-clean"></i>Clean</span><span><i class="ui-flow-spam"></i>Spam</span></div>
+            <div class="ui-flow-zoom" role="group" aria-label="Zoom the chart">
+                <button type="button" class="ui-icon-btn ui-icon-btn-sm" onclick="dashFlowStep('earlier')" aria-label="Earlier" title="Earlier"${off(can.earlier)}>&lsaquo;</button>
+                <button type="button" class="ui-icon-btn ui-icon-btn-sm" onclick="dashFlowStep('out')" aria-label="Zoom out" title="Zoom out"${off(can.out)}>&minus;</button>
+                <button type="button" class="ui-icon-btn ui-icon-btn-sm" onclick="dashFlowStep('in')" aria-label="Zoom in" title="Zoom in (or pinch, drag across bars, Ctrl+wheel)"${off(can.in)}>+</button>
+                <button type="button" class="ui-icon-btn ui-icon-btn-sm" onclick="dashFlowStep('later')" aria-label="Later" title="Later"${off(can.later)}>&rsaquo;</button>
+                <button type="button" class="ui-icon-btn ui-icon-btn-sm${can.zoomed ? '' : ' is-off'}" onclick="dashFlowStep('reset')" aria-label="Reset zoom" title="Reset zoom"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
+            </div>
+            <span class="ui-flow-actions">
+                <button type="button" id="dashboard-flow-view" class="ui-btn ui-btn-sm" onclick="openMailFlowHourMessages()"${off(can.view)}>View these messages</button>
+                <button type="button" id="dashboard-flow-reset" class="ui-more is-off" onclick="pickMailFlowHour(null)">Clear</button>
+            </span>
+        </div>`;
+}
+
+// The chart's frame with a line in place of the bars (loading, or a first load that failed)
+function mailFlowFrame(inner) {
+    return `<div class="ui-flow-view">${inner}</div><div class="ui-flow-axis" aria-hidden="true"></div><div class="ui-ov" data-zoom></div>${mailFlowFoot({})}`;
+}
+
+function renderMailFlowChart() {
+    const chart = document.getElementById('dashboard-flow-chart');
+    const d = dashFlow.data;
+    if (!chart || !d) return;
+    const bars = d.buckets.map(b => ({ ...b, s: Date.parse(b.start), e: Date.parse(b.end) }));
+    const max = Math.max(1, ...bars.map(b => b.clean + b.spam));
+    const n = bars.length;
+    // Axis: hours every third (sixth on phones), the start of each day for six-hour bars, every fifth day
+    const label = (b, i) => {
+        const p = zonedParts(b.s);
+        if (i === n - 1 && b.partial) return '<span class="is-major">Now</span>';
+        if (d.bucket === 'hour') return p.hour % 6 === 0 ? `<span class="is-major">${mailFlowHour(b.s)}</span>` : p.hour % 3 === 0 ? `<span class="is-minor">${mailFlowHour(b.s)}</span>` : '<span></span>';
+        if (d.bucket === '6h') return p.hour < 6 ? `<span class="is-major">${escapeHtml(formatDayMonth(b.s))}</span>` : '<span></span>';
+        // Every fifth day, not near Now
+        return (n <= 10 || (i % 5 === 0 && i < n - 5)) ? `<span class="is-major">${escapeHtml(formatDayMonth(b.s))}</span>` : '<span></span>';
+    };
+    const zoomed = !!dashFlow.zoom;
+    dashFlow.dataView = dashFlow.view;
+    const shown = { from: Date.parse(d.from), to: Date.parse(d.to) };
+    // The part older than the logs kept (retention): shaded, so empty bars there do not read as quiet
+    const kept = d.kept_from ? Date.parse(d.kept_from) : null;
+    let gone = 0;
+    if (kept !== null && kept > shown.from) {
+        const i = bars.findIndex(b => kept < b.e);
+        gone = i < 0 ? 1 : (i + Math.max(0, kept - bars[i].s) / (bars[i].e - bars[i].s)) / n;
+    }
+    if (dashFlow.zoomer) { dashFlow.zoomer.destroy(); dashFlow.zoomer = null; }
+    uiRedrawKeepingFocus(chart, () => { chart.innerHTML = `
+        <div class="ui-flow-view">
+            <div class="ui-flow-bars" role="group" aria-label="Messages per ${d.bucket === 'day' ? 'day' : d.bucket === '6h' ? 'six hours' : 'hour'}" data-zoom>${bars.map(b => `
+                <button type="button" class="ui-flow-bar${b.partial ? ' is-partial' : ''}" data-t="${b.s}" data-start="${b.s}" data-end="${b.e}" aria-pressed="false" onclick="pickMailFlowHour(${b.s})"
+                    title="${escapeHtml(mailFlowSpan(b.s, b.e))}: ${Number(b.messages).toLocaleString()} messages, ${Number(b.clean).toLocaleString()} clean, ${Number(b.spam).toLocaleString()} spam${b.partial ? ', so far' : ''}. Click for its numbers">
+                    <i class="ui-flow-spam" style="height: ${(b.spam / max) * 100}%"></i>
+                    <i class="ui-flow-clean" style="height: ${(b.clean / max) * 100}%"></i>
+                </button>`).join('')}</div>
+            ${gone ? `<div class="ui-flow-gone" style="width:${gone * 100}%" title="Logs older than the retention days are cleaned up">${gone > .2 ? '<span>Logs cleaned up</span>' : ''}</div>` : ''}
+            <div class="ui-flow-band hidden" aria-hidden="true"></div>
+        </div>
+        <div class="ui-flow-axis" aria-hidden="true">${bars.map(label).join('')}</div>
+        <div class="ui-ov" data-zoom role="group" aria-label="The whole period, with the span shown"></div>
+        ${mailFlowFoot({ zoomed, earlier: zoomed && shown.from > dashFlow.limits.from, out: zoomed, in: shown.to - shown.from > dashFlow.limits.min, later: zoomed && shown.to < dashFlow.limits.to, view: true })}`;
+        renderMailFlowOverview(); });
+    const box = chart.querySelector('.ui-flow-bars');
+    const view = chart.querySelector('.ui-flow-view');
+    const band = chart.querySelector('.ui-flow-band');
+    dashFlow.zoomer = uiTimeZoom(box, {
+        bars: () => [...box.querySelectorAll('.ui-flow-bar')],
+        span: () => dashFlow.zoom || dashFlow.limits,
+        limits: () => dashFlow.limits,
+        preview: (span, kind) => {
+            if (!dashFlow.previewing) {
+                // The gesture is on: an answer still on its way is set aside
+                dashFlow.previewing = true;
+                if (dashFlow.zoomControl) dashFlow.zoomControl.abort();
+                dashFlow.zoomGen++;
+            }
+            if (kind === 'select') {
+                const r = view.getBoundingClientRect();
+                band.classList.remove('hidden');
+                band.style.left = `${span.x1 - r.left}px`;
+                band.style.width = `${span.x2 - span.x1}px`;
+                return;
+            }
+            // Pinch, move or wheel: the bars stretch and slide to where the new span will be
+            const len = shown.to - shown.from, next = span.to - span.from;
+            const k = len / next;
+            const x = -(span.from - shown.from) / len * view.clientWidth * k;
+            box.style.transformOrigin = '0 0';
+            box.style.transform = `translateX(${x}px) scaleX(${k})`;
+        },
+        change: span => { dashFlow.previewing = false; dashFlowZoom({ from: span.from, to: span.to }); },
+        cancel: () => {
+            dashFlow.previewing = false;
+            box.style.transform = '';
+            band.classList.add('hidden');
+            loadMailFlowChart();
+        },
+    });
     renderMailFlowStats();
 }
 
 function renderMailFlowStats() {
-    const d = dashboardStats;
+    const d = dashFlow.data;
     if (!d) return;
-    const slot = mailFlowPicked === null ? null : mailFlowSlots.find(s => s.t === mailFlowPicked);
-    if (!slot) mailFlowPicked = null;
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    const period = DASH_PERIODS[dashFlow.period];
+    const bar = dashFlow.pick === null ? null : d.buckets.find(b => Date.parse(b.start) === dashFlow.pick);
+    if (!bar) dashFlow.pick = null;
+    // A line cut short on a narrow screen shows in full on hover
+    const set = (id, text) => { const el = document.getElementById(id); if (el) { el.textContent = text; if (el.tagName === 'SMALL') el.title = text; } };
     const n = v => (v || 0).toLocaleString();
-    if (slot) {
-        set('stat-messages-24h', n(slot.unique_messages));
-        set('stat-blocked-24h', n(slot.blocked));
-        set('stat-deferred-24h', n(slot.deferred));
-        set('stat-auth-failures-24h', n(slot.auth_failures));
-        set('stat-messages-note', `${n(slot.messages)} deliveries, 24h: ${n(d.messages.unique_24h)}`);
-        set('stat-blocked-note', `24h: ${n(d.blocked['24h'])}`);
-        set('stat-deferred-note', `24h: ${n(d.deferred['24h'])}`);
-        set('stat-auth-failures-note', `24h: ${n(d.auth_failures['24h'])}`);
-        set('dashboard-flow-title', `Mail flow, ${mailFlowHour(slot.t)} to ${mailFlowHour(slot.t + 3600000)}`);
-    } else {
-        set('stat-messages-24h', n(d.messages.unique_24h ?? d.messages['24h']));
-        set('stat-blocked-24h', n(d.blocked['24h']));
-        set('stat-deferred-24h', n(d.deferred['24h']));
-        set('stat-auth-failures-24h', n(d.auth_failures['24h']));
-        set('stat-messages-note', `${n(d.messages['24h'])} deliveries, 7d: ${n(d.messages.unique_7d ?? d.messages['7d'])}`);
-        set('stat-blocked-note', `7d: ${n(d.blocked['7d'])} (${d.blocked.percentage_24h}%)`);
-        set('stat-deferred-note', `7d: ${n(d.deferred['7d'])}`);
-        set('stat-auth-failures-note', `7d: ${n(d.auth_failures['7d'])}`);
-        set('dashboard-flow-title', 'Mail flow, last 24 hours');
+    const src = bar || d.totals;
+    set('stat-messages-24h', n(src.messages));
+    set('stat-blocked-24h', n(src.blocked));
+    set('stat-deferred-24h', n(src.deferred));
+    set('stat-auth-failures-24h', n(src.auth_failures));
+    // Under each figure: the whole span for a bar, the period before for a period
+    const p = dashFlow.prev && dashFlow.prev.totals;
+    const before = key => {
+        if (bar) return `${dashFlow.zoom ? 'Shown' : period.name}: ${n(d.totals[key])}`;
+        if (dashFlow.zoom || !p) return '';
+        // A period before the oldest logs kept may hold only part of its mail (the note under the chart says why)
+        return `Previous: ${n(p[key])}${dashFlow.prev.older_may_be_gone ? ' (partial)' : ''}`;
+    };
+    // Two lines under Messages, always both: the deliveries, and the span before or shown
+    const note = document.getElementById('stat-messages-note');
+    if (note) {
+        const lines = [`${n(src.deliveries)} deliveries`, before('messages')];
+        note.innerHTML = lines.map(line => `<span>${escapeHtml(line) || '&nbsp;'}</span>`).join('');
+        note.title = lines.filter(Boolean).join(', ');
     }
-    document.getElementById('dashboard-flow-reset')?.classList.toggle('hidden', !slot);
-    document.getElementById('dashboard-flow-view')?.classList.toggle('hidden', !slot);
+    set('stat-blocked-note', before('blocked'));
+    set('stat-deferred-note', before('deferred'));
+    set('stat-auth-failures-note', before('auth_failures'));
+    const span = bar ? mailFlowSpan(Date.parse(bar.start), Date.parse(bar.end))
+        : dashFlow.zoom ? mailFlowSpan(Date.parse(d.from), Date.parse(d.to)) : period.last;
+    set('dashboard-flow-title', `Mail flow, ${span}${(bar ? bar.partial : false) ? ', so far' : ''}`);
+    // Clear keeps its place when nothing is picked, so the row does not move
+    document.getElementById('dashboard-flow-reset')?.classList.toggle('is-off', !bar);
     const bars = document.querySelector('#dashboard-flow-chart .ui-flow-bars');
     if (bars) {
-        bars.classList.toggle('has-pick', !!slot);
-        bars.querySelectorAll('.ui-flow-bar').forEach(b => b.setAttribute('aria-pressed', String(!!slot && Number(b.dataset.t) === slot.t)));
+        bars.classList.toggle('has-pick', !!bar);
+        bars.querySelectorAll('.ui-flow-bar').forEach(b => b.setAttribute('aria-pressed', String(!!bar && Number(b.dataset.t) === dashFlow.pick)));
     }
 }
 
-// The picked hour's messages on the Messages page: its time filter set to that hour, the other filters cleared.
-// Messages counts by the same first-seen time as the chart's Messages figure, so the two agree.
-function openMailFlowHourMessages() {
-    const slot = mailFlowSlots.find(s => s.t === mailFlowPicked);
-    if (!slot) return;
-    const start = new Date(slot.t).toISOString();
-    const end = new Date(slot.t + 3600000 - 1).toISOString();
+// The Messages page over a span of time (and a mailbox): every other filter
+// cleared, the exact start and end kept (its date picker shows their days and
+// keeps them until another range is applied). endInclusive: the last moment
+// in it, as the Messages page's end is inclusive.
+function openMessagesRange({ start, endInclusive, user = '', label = '' }) {
     ['search', 'sender', 'recipient', 'user', 'ip', 'direction', 'status'].forEach(key => {
         const el = document.getElementById(`messages-filter-${key}`);
         if (el) el.value = '';
     });
+    if (user) {
+        const field = document.getElementById('messages-filter-user');
+        if (field) field.value = user;
+    }
     document.getElementById('messages-date-range').value = 'custom';
     document.getElementById('messages-start-date').value = start;
-    document.getElementById('messages-end-date').value = end;
-    // The custom range picker shows the day the hour is on, a day in the app's zone like its Apply reads
-    const day = zonedDateString(slot.t);
-    document.getElementById('messages-date-range-start').value = day;
-    document.getElementById('messages-date-range-end').value = day;
-    const dayLabel = formatInZone(slot.t, { month: 'short', day: 'numeric' }, 'en-US');
-    document.getElementById('messages-date-range-label').textContent = `${dayLabel}, ${mailFlowHour(slot.t)} to ${mailFlowHour(slot.t + 3600000)}`;
+    document.getElementById('messages-end-date').value = endInclusive;
+    // The custom range picker shows the days, in the app's zone like its Apply reads
+    document.getElementById('messages-date-range-start').value = zonedDateString(Date.parse(start));
+    document.getElementById('messages-date-range-end').value = zonedDateString(Date.parse(endInclusive));
+    document.getElementById('messages-date-range-label').textContent = label || mailFlowSpan(Date.parse(start), Date.parse(endInclusive) + 1);
     setMessagesDatePresetActive(null);
-    currentFilters.messages = { start_date: start, end_date: end };
+    currentFilters.messages = { start_date: start, end_date: endInclusive, ...(user ? { user } : {}) };
     currentPage.messages = 1;
     navigateTo('messages');
 }
 
-// Hourly messages over the last 24 hours, clean and spam (Rspamd), as bars over a time axis
-async function loadMailFlowChart() {
-    const chart = document.getElementById('dashboard-flow-chart');
-    if (!chart) return;
-    let rows = [];
-    try {
-        const res = await authenticatedFetch('/api/stats/timeline?hours=24');
-        if (res.ok) rows = (await res.json()).timeline || [];
-    } catch (e) {
-        rows = [];
-    }
-    const byHour = new Map(rows.map(r => [new Date(r.hour).getTime(), r]));
-    // Hours are counted from the epoch, so any time zone lines up with the UTC buckets
-    const now = Math.floor(Date.now() / 3600000) * 3600000;
-    const slots = [];
-    for (let i = 23; i >= 0; i--) {
-        const t = now - i * 3600 * 1000;
-        const r = byHour.get(t) || {};
-        slots.push({ t, clean: r.clean || 0, spam: r.spam || 0, messages: r.messages || 0, unique_messages: r.unique_messages || 0, blocked: r.blocked || 0,
-            deferred: r.deferred || 0, auth_failures: r.auth_failures || 0 });
-    }
-    mailFlowSlots = slots;
-    const max = Math.max(1, ...slots.map(s => s.clean + s.spam));
-    // The axis names every third hour (every sixth on phones) and ends at now
-    const label = (s, i) => i === slots.length - 1 ? '<span class="is-major">Now</span>'
-        : i % 6 === 0 ? `<span class="is-major">${mailFlowHour(s.t)}</span>`
-        : i % 3 === 0 ? `<span class="is-minor">${mailFlowHour(s.t)}</span>` : '<span></span>';
-    chart.innerHTML = `
-        <div class="ui-flow-bars" role="group" aria-label="Messages per hour">${slots.map(s => `
-            <button type="button" class="ui-flow-bar" data-t="${Number(s.t)}" aria-pressed="false" onclick="pickMailFlowHour(${Number(s.t)})"
-                title="${mailFlowHour(s.t)} to ${mailFlowHour(s.t + 3600000)}: ${Number(s.clean).toLocaleString()} clean, ${Number(s.spam).toLocaleString()} spam. Click for this hour's numbers">
-                <i class="ui-flow-spam" style="height: ${(s.spam / max) * 100}%"></i>
-                <i class="ui-flow-clean" style="height: ${(s.clean / max) * 100}%"></i>
-            </button>`).join('')}</div>
-        <div class="ui-flow-axis" aria-hidden="true">${slots.map(label).join('')}</div>
-        <div class="ui-flow-legend"><span><i class="ui-flow-clean"></i>Clean</span><span><i class="ui-flow-spam"></i>Spam</span></div>`;
-    renderMailFlowStats();
+// The picked bar's messages, else those of all the bars shown, on the Messages page.
+// It shows the messages with a delivery in that time: a message counted in an
+// earlier bar (its first delivery) shows there too.
+function openMailFlowHourMessages() {
+    const d = dashFlow.data;
+    if (!d) return;
+    const bar = dashFlow.pick === null ? null : d.buckets.find(b => Date.parse(b.start) === dashFlow.pick);
+    if (bar) openMessagesRange({ start: bar.start, endInclusive: bar.end_inclusive });
+    else openMessagesRange({ start: d.from, endInclusive: d.to_inclusive });
 }
 
+// Dismissing acts at once; the answer's receipt lets Undo re-open exactly what it
+// changed, for 10 seconds (longer while the pointer or the focus is on the toast)
 async function acknowledgeSecurityAlert(alertId) {
+    const alert = dashboardAlerts.get(Number(alertId)) || (typeof alertActivity !== 'undefined' && alertActivity && Number(alertActivity.alert.id) === Number(alertId) ? alertActivity.alert : null);
+    // Its title, with the mailbox or username when the title does not already name it
+    const name = !alert ? 'the alert' : alert.subject && !String(alert.title).includes(alert.subject) ? `${alert.title}: ${alert.subject}` : alert.title;
     try {
-        await authenticatedFetch(`/api/security-alerts/${alertId}/acknowledge`, { method: 'POST' });
+        const res = await authenticatedFetch(`/api/security-alerts/${alertId}/acknowledge`, { method: 'POST' });
+        if (!res.ok) throw new Error(res.status === 404 ? 'it is gone' : `the server answered ${res.status}`);
+        const done = await res.json();
         loadDashboardSecurityAlerts();
+        if (!done.receipt) { showToast('Already dismissed', 'info'); return; }
+        offerAlertUndo(done.receipt, 'Alert dismissed', `Undo dismissing ${name}`);
     } catch (e) {
-        showToast('Failed to dismiss alert', 'error');
+        showToast(`Could not dismiss the alert: ${e.message || 'no answer'}. Try again.`, 'error');
     }
 }
 
 async function acknowledgeAllSecurityAlerts() {
+    const ids = dashboardOpenAlertIds.slice();
+    if (!ids.length) return;
     try {
-        await authenticatedFetch('/api/security-alerts/acknowledge-all', { method: 'POST' });
+        const res = await authenticatedFetch('/api/security-alerts/acknowledge-all', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error(`the server answered ${res.status}`);
+        const done = await res.json();
         loadDashboardSecurityAlerts();
-        showToast('All security alerts dismissed', 'success');
+        if (!done.receipt) { showToast('Already dismissed', 'info'); return; }
+        const words = `${uiCountLabel(done.acknowledged, 'alert', 'alerts')} dismissed`;
+        offerAlertUndo(done.receipt, words, `Undo dismissing ${uiCountLabel(done.acknowledged, 'alert', 'alerts')}`);
     } catch (e) {
-        showToast('Failed to dismiss alerts', 'error');
+        showToast(`Could not dismiss the alerts: ${e.message || 'no answer'}. Try again.`, 'error');
     }
+}
+
+function offerAlertUndo(receipt, message, undoName) {
+    showToast(message, 'success', { duration: 10000, action: { label: 'Undo', ariaLabel: undoName, onAction: () => undoAlertDismissal(receipt, undoName) } });
+}
+
+function offerAlertsRefresh(message) {
+    showToast(message, 'warning', { duration: Infinity, action: { label: 'Refresh', ariaLabel: 'Refresh Needs attention', onAction: async () => {
+        // The next message takes the keyboard over from this one, whether it worked or not
+        if (!(await loadDashboardSecurityAlerts())) offerAlertsRefresh('Needs attention could not be refreshed. Try again.');
+        else showToast('Needs attention is up to date', 'success');
+    } } });
+}
+
+// Re-open what a dismissal changed. A failure says so and offers Retry until closed.
+async function undoAlertDismissal(receipt, undoName) {
+    try {
+        const res = await authenticatedFetch(`/api/security-alerts/acknowledgements/${encodeURIComponent(receipt)}/undo`, { method: 'POST' });
+        if (!res.ok) throw new Error(`the server answered ${res.status}`);
+        const done = await res.json();
+        const shown = await loadDashboardSecurityAlerts();
+        const back = done.restored ? `${uiCountLabel(done.restored, 'alert', 'alerts')} back` : '';
+        if (!shown) {
+            offerAlertsRefresh(back ? `${back}, but Needs attention could not be refreshed.` : 'Needs attention could not be refreshed.');
+            return;
+        }
+        // On the Dashboard the keyboard goes to the first alert back (its Dismiss), else to
+        // Needs attention; on another page it stays with the message
+        if (typeof currentTab === 'undefined' || currentTab === 'dashboard') {
+            const row = done.ids && done.ids.map(id => document.querySelector(`#dashboard-security-alerts [data-key="alert-${Number(id)}"]`)).find(Boolean);
+            const target = row ? [...row.querySelectorAll('button')].find(b => b.textContent.trim() === 'Dismiss') : document.getElementById('dashboard-attention-scroll');
+            if (target) target.focus({ preventScroll: false });
+        }
+        showToast(back ? `${back} in Needs attention` : 'Nothing to undo: dismissed again since', back ? 'success' : 'info');
+    } catch (e) {
+        showToast(`Could not undo: ${e.message || 'no answer'}.`, 'error', { duration: Infinity, action: { label: 'Retry', ariaLabel: `Retry: ${undoName}`, onAction: () => undoAlertDismissal(receipt, undoName) } });
+    }
+}
+
+// The figures' trends (/api/stats/trends): loaded with the dashboard's checks, painted
+// into each figure's place, and again whenever a card is drawn anew
+const DASH_TRENDS = {
+    storage_used: { label: 'Mail storage used', format: v => `${Math.round(v)}%` },
+    security_review: { label: 'Addresses to review', format: v => `${Math.round(v)}`, feature: 'netfilter' },
+    security_banned: { label: 'Addresses banned', format: v => `${Math.round(v)}`, feature: 'netfilter' },
+};
+let dashboardTrends = null;
+
+async function loadDashboardTrends() {
+    const names = Object.keys(DASH_TRENDS).filter(n => !DASH_TRENDS[n].feature || !isFeatureDisabled(DASH_TRENDS[n].feature));
+    try {
+        const res = await authenticatedFetch(`/api/stats/trends?names=${names.join(',')}&days=7`);
+        if (!res.ok) return;
+        dashboardTrends = (await res.json()).trends || {};
+        paintDashboardTrends();
+    } catch (e) {
+        console.warn('Failed to load trends:', e);
+    }
+}
+
+function paintDashboardTrends() {
+    document.querySelectorAll('.ui-spark[data-trend]').forEach(el => {
+        const name = el.dataset.trend, meta = DASH_TRENDS[name];
+        if (!meta || !dashboardTrends || !(name in dashboardTrends)) { el.innerHTML = ''; return; }
+        el.innerHTML = uiSparkline(dashboardTrends[name], { days: 7, label: meta.label, format: meta.format });
+    });
 }
 
 // One dashboard health card: the big value, its tone and the line under it
@@ -2251,16 +2814,18 @@ function renderDashboardSecurity(page = dashboardSecurityPage) {
     dashboardSecurityPage = page;
     const box = document.getElementById('dashboard-security');
     if (!box) return;
-    const counts = page ? page.all_counts : null;
-    const n = key => counts ? Number(counts[key]).toLocaleString() : '-';
+    // Without Fail2ban's answer neither list is known (its bans and lists are missing)
+    const known = !page || page.fail2ban_known !== false;
+    const counts = page && known ? page.all_counts : null;
+    const n = key => counts ? Number(counts[key]).toLocaleString() : page ? 'Unknown' : '-';
     const protections = securityProtectionItems();
     const on = protections.filter(securityProtectionOn);
     // The line's own mark: a tick when anything acts, an eye when everything on only watches
     const lineState = on.some(p => p.state === 'on') ? 'on' : on.length ? 'watch' : 'off';
     box.innerHTML = `
         <div class="ui-stats ui-dash-sec-stats">
-            <button type="button" class="ui-stat" onclick="openSecurityList('review')"><span>To review</span><b>${n('review')}</b><small>Not banned</small></button>
-            <button type="button" class="ui-stat" onclick="openSecurityList('banned')"><span>Banned now</span><b${counts && counts.banned ? ' class="ui-text-fail"' : ''}>${n('banned')}</b><small>By Fail2ban and the rules</small></button>
+            <button type="button" class="ui-stat" onclick="openSecurityList('review')"><span>To review</span><b>${n('review')}</b><small>${known ? 'Not banned' : 'Fail2ban did not answer'}</small><span class="ui-spark" data-trend="security_review"></span></button>
+            <button type="button" class="ui-stat" onclick="openSecurityList('banned')"><span>Banned now</span><b${counts && counts.banned ? ' class="ui-text-fail"' : ''}>${n('banned')}</b><small>${known ? 'By Fail2ban and the rules' : 'Fail2ban did not answer'}</small><span class="ui-spark" data-trend="security_banned"></span></button>
         </div>
         <button type="button" class="ui-dash-sec-prot is-${lineState}" aria-expanded="${dashboardProtectionsOpen}" aria-controls="dashboard-protections"
             onclick="dashboardProtectionsOpen = !dashboardProtectionsOpen; renderDashboardSecurity()">
@@ -2268,6 +2833,7 @@ function renderDashboardSecurity(page = dashboardSecurityPage) {
             ${on.length && !dashboardProtectionsOpen ? `<span class="ui-dash-sec-on">${on.map(p => escapeHtml(p.name)).join(' · ')}</span>` : ''}
         </button>
         ${dashboardProtectionsOpen ? `<div id="dashboard-protections" class="ui-dash-sec-list">${protections.map(p => securityProtectionButton(p, 'openSecurityProtection')).join('')}</div>` : ''}`;
+    paintDashboardTrends();
 }
 
 // Jobs, message linking and the app version for the dashboard health cards
@@ -2280,7 +2846,8 @@ async function loadDashboardHealth() {
             setDashKpi('dash-kpi-jobs', `${jobs.healthy} of ${jobs.running} healthy`, jobs.failed.length ? 'fail' : '',
                 jobs.failed.length ? `${jobs.failed.map(([name]) => name).join(', ')} failed` : (jobs.off ? `${jobs.off} off with their feature` : 'None failed'));
             const c = info.correlation_status || {};
-            setDashKpi('dash-kpi-linking', `${c.completion_rate || 0}%`, c.incomplete ? 'warn' : '',
+            if (c.known === false || !info.correlation_status) setDashKpi('dash-kpi-linking', 'Unknown', '', 'Could not count');
+            else setDashKpi('dash-kpi-linking', `${c.completion_rate || 0}%`, c.incomplete ? 'warn' : '',
                 `${(c.complete || 0).toLocaleString()} of ${(c.total || 0).toLocaleString()} complete`);
         }
         if (versionRes.ok) {
@@ -2314,7 +2881,8 @@ async function loadDashboardStatusSummary() {
         const storage = data.storage || {};
         const usedPercent = parseInt(storage.used_percent) || 0;
         const storageLevel = usedPercent > 90 ? 'fail' : usedPercent > 75 ? 'warn' : '';
-        setDashKpi('dash-kpi-storage', `${storage.used_percent || '0%'} used`, storageLevel, `${storage.used || '0'} of ${storage.total || '0'}`);
+        if (storage.known === false) setDashKpi('dash-kpi-storage', 'Unknown', '', 'mailcow did not answer');
+        else setDashKpi('dash-kpi-storage', `${storage.used_percent || '0%'} used`, storageLevel, `${storage.used || '0'} of ${storage.total || '0'}`);
 
         const systemDiv = document.getElementById('dashboard-system-summary');
         const system = data.system || {};
@@ -2325,43 +2893,6 @@ async function loadDashboardStatusSummary() {
         `;
     } catch (error) {
         console.error('Failed to load status summary:', error);
-    }
-}
-
-async function loadRecentActivity() {
-    const container = document.getElementById('recent-activity');
-
-    try {
-        console.log('Loading Recent Activity...');
-
-        const response = await authenticatedFetch('/api/stats/recent-activity?limit=11');
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        console.log('Recent Activity data:', data);
-
-        if (data.activity.length === 0) {
-            container.innerHTML = '<p class="ui-empty">No recent activity</p>';
-            return;
-        }
-
-        // One compact row per message: time, outcome dot, who, subject
-        container.innerHTML = data.activity.map(msg => {
-            const tone = UI_STATUS_TONE[msg.status] || '';
-            const state = `${msg.status || 'unknown'}${msg.direction ? `, ${msg.direction}` : ''}`;
-            return `
-            <div class="ui-mrow" role="button" tabindex="0" data-row-open onclick="if (!uiRowHeld(event)) viewMessageDetails('${escapeJsArg(msg.correlation_key)}')">
-                <time title="${escapeHtml(formatTime(msg.time))}">${formatListTime(msg.time)}</time>
-                <i class="ui-mdot${tone ? ` ui-mdot-${tone}` : ''}" title="${escapeHtml(state)}" role="img" aria-label="${escapeHtml(state)}"></i>
-                <span class="ui-mrow-who">${escapeHtml(msg.sender || 'Unknown')} → ${escapeHtml(msg.recipient || 'Unknown')}</span>
-                <span class="ui-mrow-sub" dir="auto" title="${escapeHtml(msg.subject || 'No subject')}">${escapeHtml(msg.subject || 'No subject')}</span>
-            </div>`;
-        }).join('');
-    } catch (error) {
-        console.error('Failed to load recent activity:', error);
-        document.getElementById('recent-activity').innerHTML = `<p class="ui-empty ui-text-fail">Failed to load activity: ${escapeHtml(error.message)}</p>`;
     }
 }
 
@@ -2602,7 +3133,7 @@ function applyQueueFilters() {
 
     container.innerHTML = `
         ${lockedNote}
-        <div class="ui-table ui-stack" style="${cols}">
+        <div class="ui-table ui-stack" data-sort-at="queue-filter-search" data-sort-name="mail queue" style="${cols}">
         ${canAct ? `
             <div class="ui-toolbar ui-table-tools">
                 <button onclick="queueSelectAll()" id="queue-select-all-btn" class="ui-btn ui-btn-sm">Select All</button>
@@ -2617,7 +3148,7 @@ function applyQueueFilters() {
                 <button onclick="queueDeleteAll()" id="queue-delete-all-btn" class="ui-btn ui-btn-sm ui-btn-danger-solid">Delete All</button>
             </div>
         ` : ''}
-            <div class="ui-tr ui-tr-head">${canAct ? '<span></span>' : ''}<span>Recipient</span><span>State</span><span>Last response</span><span class="ui-td-end">Size</span><span class="ui-td-end">Actions</span></div>
+            <div class="ui-tr ui-tr-head">${canAct ? '<span></span>' : ''}<span data-sort-kind="text">Recipient</span><span data-sort-kind="text">State</span><span data-sort-kind="text">Last response</span><span class="ui-td-end" data-sort-kind="number">Size</span><span class="ui-td-end">Actions</span></div>
             ${filteredData.map(item => {
                 const qid = item.queue_id || '';
                 const queueName = (item.queue_name || '').toLowerCase();
@@ -2806,46 +3337,14 @@ async function queueDeleteRequest(itemIds) {
 // =============================================================================
 
 // Client-side sort state for the quarantine list ('newest' matches the backend default order)
-let quarantineSortOrder = 'newest';
 // Last quarantine payload rendered (used to re-sort without re-fetching)
 let quarantineLastData = null;
 
-// Return a sorted copy of quarantine items based on quarantineSortOrder.
-// Items without a numeric score are placed last in both score directions.
 // Reject is the strong verdict; add header and the softer ones read as a warning
 function quarantineActionTone(action) {
     return ['reject', 'discard'].includes(String(action || '').toLowerCase()) ? 'fail' : 'warn';
 }
 
-function sortQuarantineItems(items) {
-    const sorted = [...items];
-    if (quarantineSortOrder !== 'score_desc' && quarantineSortOrder !== 'score_asc') {
-        return sorted; // 'newest' - keep backend order (newest first)
-    }
-    const scoreOf = (item) => (typeof item.score === 'number' && isFinite(item.score)) ? item.score : null;
-    sorted.sort((a, b) => {
-        const sa = scoreOf(a);
-        const sb = scoreOf(b);
-        if (sa === null && sb === null) return 0;
-        if (sa === null) return 1;
-        if (sb === null) return -1;
-        return quarantineSortOrder === 'score_asc' ? sa - sb : sb - sa;
-    });
-    return sorted;
-}
-
-// Handler for the #quarantine-sort dropdown - re-sorts the already-fetched list
-function applyQuarantineSort() {
-    if (typeof uiClearTableSort === 'function') uiClearTableSort('quarantine-logs');
-    const select = document.getElementById('quarantine-sort');
-    if (select) quarantineSortOrder = select.value;
-    uiFilterBarSync();
-    if (quarantineLastData) {
-        renderQuarantineData(quarantineLastData);
-    } else {
-        loadQuarantine();
-    }
-}
 
 async function loadQuarantine() {
     const container = document.getElementById('quarantine-logs');
@@ -2895,7 +3394,7 @@ function renderQuarantineData(data) {
     }
 
     const canAct = mailcowRwConfigured;
-    const items = sortQuarantineItems(data.data);
+    const items = data.data;
 
     const lockedNote = canAct ? '' : `<div class="ui-list-note">${uiLocked('Quarantine actions are locked', `Release, delete, spam learning and the auto-rules ${UI_RW_KEY_TEXT}`)}</div>`;
     const cols = canAct
@@ -2904,7 +3403,7 @@ function renderQuarantineData(data) {
 
     container.innerHTML = `
         ${lockedNote}
-        <div class="ui-table ui-stack" data-phone-sort="off" style="${cols}">
+        <div class="ui-table ui-stack" data-sort-at="quarantine-list-summary" data-sort-name="quarantined messages" data-sort-default="Held:desc" style="${cols}">
         ${!canAct ? '' : `
             <div class="ui-toolbar ui-table-tools">
                 <button onclick="quarantineSelectAll()" id="quarantine-select-all-btn" class="ui-btn ui-btn-sm">Select All</button>
@@ -2918,7 +3417,7 @@ function renderQuarantineData(data) {
                 <button onclick="quarantineDeleteAll()" id="quarantine-delete-all-btn" class="ui-btn ui-btn-sm ui-btn-danger-solid">Delete All</button>
             </div>
         `}
-            <div class="ui-tr ui-tr-head">${canAct ? '<span></span>' : ''}<span>Message</span><span>For</span><span>Why</span><span class="ui-td-end">Score</span><span>Held</span><span class="ui-td-end">Actions</span></div>
+            <div class="ui-tr ui-tr-head">${canAct ? '<span></span>' : ''}<span data-sort-kind="text">Message</span><span data-sort-kind="text">For</span><span data-sort-kind="text">Why</span><span class="ui-td-end" data-sort-kind="number">Score</span><span data-sort-kind="date">Held</span><span class="ui-td-end">Actions</span></div>
             ${items.map(item => {
                 const itemId = item.id !== undefined ? item.id : '';
                 const idArg = escapeJsArg(String(itemId));
@@ -2932,8 +3431,8 @@ function renderQuarantineData(data) {
                     </div>
                     <span class="ui-td">${escapeHtml(item.rcpt || 'Unknown')}</span>
                     <span class="ui-td ui-td-wrap">${uiTag(item.action || 'Quarantined', quarantineActionTone(item.action))}${item.virus_flag ? ` ${uiTag('Virus', 'spam')}` : ''}</span>
-                    <span class="ui-td ui-td-end${hasScore && item.score >= 15 ? ' ui-text-fail' : ''}"><small class="ui-sec-unit">Score </small>${hasScore ? item.score.toFixed(1) : '-'}</span>
-                    <time class="ui-td" title="${escapeHtml(formatTime(item.created))}"><small class="ui-sec-unit">Held </small>${formatAgo(item.created).replace(' ago', '')}</time>
+                    <span class="ui-td ui-td-end${hasScore && item.score >= 15 ? ' ui-text-fail' : ''}"${hasScore && isFinite(Number(item.score)) ? ` data-sort="${Number(item.score)}"` : ''}><small class="ui-sec-unit">Score </small>${hasScore ? item.score.toFixed(1) : '-'}</span>
+                    <time class="ui-td" title="${escapeHtml(formatTime(item.created))}"${isFinite(Date.parse(item.created)) ? ` data-sort="${Date.parse(item.created)}"` : ''}><small class="ui-sec-unit">Held </small>${formatAgo(item.created).replace(' ago', '')}</time>
                     <span class="ui-td ui-td-end ui-row-actions">
                         ${canAct ? `
                             <button onclick="quarantineRelease('${idArg}')" title="Release message" class="quarantine-action-btn ui-btn ui-btn-sm">Release</button>
@@ -3093,7 +3592,7 @@ async function showQuarantineDetails(itemId) {
     modal.className = 'ui-dialog-backdrop';
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-label', 'Quarantine Item Details');
-    modal.onclick = event => { if (event.target === modal) closeQuarantineDetails(); };
+    modal.onclick = event => { if (uiBackdropClick(event)) closeQuarantineDetails(); };
     modal.innerHTML = `
         <div class="ui-dialog ui-dialog-fit">
             <div class="ui-dialog-head">
@@ -3674,7 +4173,7 @@ async function testQuarantineRules() {
         document.body.insertAdjacentHTML('beforeend', html);
         // Results only, nothing typed: a click outside closes it
         const testModal = document.getElementById('qrule-test-modal');
-        testModal.addEventListener('click', e => { if (e.target === testModal) testModal.remove(); });
+        testModal.addEventListener('click', e => { if (uiBackdropClick(e)) testModal.remove(); });
     } catch (err) {
         showToast('Test failed: ' + err.message, 'error');
     }
@@ -3759,6 +4258,8 @@ function updateMessagesFilterState() {
     const any = advanced || f.search || f.status || f.direction || f.start_date || f.end_date || f.date_range;
     const badge = document.getElementById('messages-filters-n');
     if (badge) { badge.textContent = advanced || ''; badge.classList.toggle('hidden', !advanced); }
+    const button = document.getElementById('messages-filters-btn');
+    if (button) button.setAttribute('aria-label', advanced ? `Filters, ${advanced} in use` : 'Filters');
     const clear = document.getElementById('messages-clear-filters');
     if (clear) clear.classList.toggle('hidden', !any);
 }
@@ -3947,18 +4448,20 @@ function renderFacetList(kind, entries, counts, current, asOptions = false) {
     }).join('');
 }
 
-async function loadMessageFacets(filters) {
+// gen: the list these counts belong to; counts for an older list are dropped
+async function loadMessageFacets(filters, gen = messagesGen) {
     const statusList = document.getElementById('messages-facet-status');
     const directionList = document.getElementById('messages-facet-direction');
     let data = null;
     try {
         const params = messagesFilterParams(filters);
         for (const preset of ['today', '7days', '30days', '90days']) params.append('since', `${preset}:${messagesPresetStart(preset)}`);
-        const response = await authenticatedFetch(`/api/messages/facets?${params}`);
+        const response = await messagesFetch(`/api/messages/facets?${params}`);
         if (response.ok) data = await response.json();
     } catch (e) {
-        console.warn('Failed to load message facets:', e);
+        if (e.name !== 'AbortError') console.warn('Failed to load message facets:', e);
     }
+    if (gen !== messagesGen) return;
     const status = filters.status || '';
     const direction = filters.direction || '';
     if (statusList) statusList.innerHTML = renderFacetList('status', MESSAGE_STATUS_FACETS, data && data.status, status);
@@ -3999,50 +4502,41 @@ function afterMessagesRendered(data) {
     }
 }
 
-async function loadMessages(page = 1) {
+async function loadMessages() {
     const container = document.getElementById('messages-logs');
-
+    renderMessagesSort();
+    // A new list: whatever the older one still has on its way is aborted
+    const gen = messagesNewGeneration();
+    messagesFullLoad = true;
+    container.innerHTML = '<div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div>';
+    const filters = currentFilters.messages || {};
+    loadMessageFacets(filters, gen);
+    updateMessagesFilterState();
+    // The list grows as it scrolls, so a new load always starts at the top
+    container.scrollTop = 0;
     try {
-        container.innerHTML = '<div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div>';
-
-        const filters = currentFilters.messages || {};
-        loadMessageFacets(filters);
-        updateMessagesFilterState();
-        // The list grows as it scrolls, so a new load always starts at the top
-        page = 1;
-        const params = messagesQueryParams(page);
-        container.scrollTop = 0;
-
-        console.log('Loading Messages:', `/api/messages?${params}`);
-
-        const response = await authenticatedFetch(`/api/messages?${params}`);
+        const response = await messagesFetch(`/api/messages?${messagesQueryParams()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
         const data = await response.json();
-        console.log('Messages data:', data);
-
-        // Update count display
-        const countEl = document.getElementById('messages-count');
-        if (countEl) {
-            countEl.textContent = uiCountLabel(data.total || 0, 'message', 'messages');
-        }
-
-        if (!data.data || data.data.length === 0) {
-            container.innerHTML = '<p class="ui-empty">No messages found</p>';
-            return;
-        }
-
-        renderMessagesList(container, data);
+        if (gen !== messagesGen) return;
+        showMessagesFirstPage(container, data);
         afterMessagesRendered(data);
-
-        currentPage.messages = page;
     } catch (error) {
+        // A newer load is on its way or shown (this one may have been aborted for it)
+        if (gen !== messagesGen) return;
         console.error('Failed to load messages:', error);
-        document.getElementById('messages-logs').innerHTML = `<p class="ui-empty ui-text-fail">Failed to load messages: ${escapeHtml(error.message)}</p>`;
-        const countEl = document.getElementById('messages-count');
-        if (countEl) countEl.textContent = '';
+        container.innerHTML = `<p class="ui-empty ui-text-fail">Failed to load messages: ${escapeHtml(error.message)}</p>`;
+        setMessagesCount(null);
+        // Nothing is shown: no next page, and the next refresh draws what it gets
+        messagesPaging.page = 1;
+        messagesPaging.cursor = null;
+        messagesPaging.total = 0;
+        currentPage.messages = 1;
+        lastDataCache.messages = null;
+    } finally {
+        if (gen === messagesGen) messagesFullLoad = false;
     }
 }
 
@@ -4583,8 +5077,10 @@ async function loadDashboardBlacklistSummary() {
         const hosts = data.hosts || [];
         const listedHosts = hosts.filter(h => h.status === 'listed');
         const checked = data.checked_at ? `checked ${formatAgo(data.checked_at)}` : '';
+        const fig = data.figure && data.figure.valid ? data.figure : null;
         if (data.status === 'listed') {
-            setDashKpi('dash-kpi-blocklists', `${listedHosts.length || data.hosts_listed || 1} of ${hosts.length || 1} listed`, 'fail',
+            // The figure its trend samples: listed of all monitored addresses
+            setDashKpi('dash-kpi-blocklists', fig ? `${fig.value} of ${fig.of} listed` : `${listedHosts.length || data.hosts_listed || 1} of ${hosts.length || 1} listed`, 'fail',
                 listedHosts.map(h => `${h.hostname} on ${h.listed_count} of ${h.total_blacklists || '?'}`).join(', '));
         } else if (data.status === 'error') {
             setDashKpi('dash-kpi-blocklists', 'Check error', 'warn', checked);
@@ -4729,7 +5225,7 @@ function renderStatusImport(imports) {
             ` : '<span class="ui-td ui-muted">No data</span><span></span><span></span><span></span>'}
         </div>`;
     container.innerHTML = `
-        <div class="ui-table ui-stack" style="--ui-cols: minmax(130px, 1fr) minmax(110px, 1fr) minmax(110px, 1fr) 110px minmax(150px, 1.2fr); --ui-table-min: 660px">
+        <div class="ui-table ui-stack" data-nosort style="--ui-cols: minmax(130px, 1fr) minmax(110px, 1fr) minmax(110px, 1fr) 110px minmax(150px, 1.2fr); --ui-table-min: 660px">
             <div class="ui-tr ui-tr-head"><span>Source</span><span>Last Fetch Run</span><span>Last Import</span><span class="ui-td-end">Total Entries</span><span>Oldest Entry</span></div>
             ${row('Postfix Logs', imports.postfix)}
             ${row('Rspamd Logs', imports.rspamd)}
@@ -4751,9 +5247,9 @@ function renderStatusCorrelation(correlation, incompleteList, maxAgeMinutes) {
     const pending = document.getElementById('status-correlation-pending');
     if (pending) pending.innerHTML = incompleteList.length > 0 ? `
         <section class="ui-sec-block">
-            <div class="ui-list-head"><h2 class="ui-h2">Waiting to be linked</h2> <span class="ui-count">${incompleteList.length}</span></div>
-            <div class="ui-table ui-stack" style="--ui-cols: minmax(180px, 1.4fr) minmax(220px, 2fr) 90px; --ui-table-min: 560px">
-                <div class="ui-tr ui-tr-head"><span>Message ID</span><span>From and to</span><span class="ui-td-end">Age</span></div>
+            <div class="ui-list-head" id="status-pending-head"><h2 class="ui-h2">Waiting to be linked</h2> <span class="ui-count">${incompleteList.length}</span></div>
+            <div class="ui-table ui-stack" data-sort-at="status-pending-head" data-sort-name="messages waiting to be linked" style="--ui-cols: minmax(180px, 1.4fr) minmax(220px, 2fr) 90px; --ui-table-min: 560px">
+                <div class="ui-tr ui-tr-head"><span data-sort-kind="text">Message ID</span><span data-sort-kind="text">From and to</span><span class="ui-td-end" data-sort-kind="date">Age</span></div>
                 ${incompleteList.map(item => `
                     <div class="ui-tr">
                         <span class="ui-td ui-mono">${copyableText(item.message_id || 'N/A')}</span>
@@ -4799,7 +5295,8 @@ function statusJobCategories(jobs) {
                 ['Mailbox Statistics', 'mailbox_stats', jobs.mailbox_stats],
                 ['Alias Statistics', 'alias_stats', jobs.alias_stats],
                 ['Sync Transports & Relayhosts', 'sync_transports', jobs.sync_transports],
-                ['Turned-Off Features', 'feature_data_sweep', jobs.feature_data_sweep]
+                ['Turned-Off Features', 'feature_data_sweep', jobs.feature_data_sweep],
+                ['Trend Samples', 'trend_samples', jobs.trend_samples]
             ]
         },
         {
@@ -5173,7 +5670,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const changelogModal = document.getElementById('changelog-modal');
     if (changelogModal) {
         changelogModal.addEventListener('click', function (e) {
-            if (e.target.id === 'changelog-modal') {
+            if (uiBackdropClick(e)) {
                 closeChangelogModal();
             }
         });
@@ -5278,6 +5775,9 @@ let containerLogsInterval = null;
 async function fetchContainerLogs(silent = false) {
     const content = document.getElementById('container-logs-content');
 
+    // The refresh leaves the log as it is while the user selects text in it
+    if (content && silent && uiTextHeld(content)) return;
+
     if (content && !silent) {
         content.textContent = 'Loading logs...';
     }
@@ -5291,6 +5791,7 @@ async function fetchContainerLogs(silent = false) {
         const data = await response.json();
 
         if (content && data.logs) {
+            if (silent && uiTextHeld(content)) return;
             const isScrolledToBottom = content.parentElement
                 ? (content.parentElement.scrollHeight - content.parentElement.scrollTop === content.parentElement.clientHeight)
                 : true;
@@ -5298,7 +5799,12 @@ async function fetchContainerLogs(silent = false) {
             if (data.logs.length === 0) {
                 if (!silent) content.textContent = 'No logs available.';
             } else {
-                content.textContent = data.logs.join('');
+                content.replaceChildren(...data.logs.join('').replace(/\r?\n$/, '').split(/\r?\n/).map(text => {
+                    const line = document.createElement('span');
+                    line.className = 'ui-log-line';
+                    line.textContent = text;
+                    return line;
+                }));
             }
 
             // Auto-scroll to bottom if it was already at bottom or if it's the first load

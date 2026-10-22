@@ -553,6 +553,15 @@ function formatTime(isoString) {
     });
 }
 
+// A day as formatTime writes it (its date part), and its day and month alone (a chart's axis)
+function formatDay(value) {
+    return formatInZone(value, { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function formatDayMonth(value) {
+    return formatInZone(value, { day: '2-digit', month: '2-digit' });
+}
+
 function formatDate(isoString) {
     if (!isoString) return '-';
     // Use formatTime for consistent date/time formatting
@@ -638,9 +647,14 @@ function copyableText(text, extraClasses) {
     return `<span class="copyable${cls}" onclick="copyToClipboard('${safeText}', event)" title="Click to copy"><bdi>${escaped}</bdi><svg class="copy-icon w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg></span>`;
 }
 
-function showToast(message, type = 'info') {
+// options.action: { label, ariaLabel, onAction } a button that runs onAction and
+// closes the toast (Undo, Retry); options.duration: how long it stays (ms; Infinity
+// keeps it until closed). One toast at a time: a new one replaces the last, and
+// the keyboard's place moves with it if it was in the one replaced.
+function showToast(message, type = 'info', options = {}) {
     // Remove existing toast if any
     const existingToast = document.getElementById('toast-notification');
+    const focusWasInIt = !!existingToast && existingToast.contains(document.activeElement);
     if (existingToast) {
         existingToast.remove();
     }
@@ -660,24 +674,50 @@ function showToast(message, type = 'info') {
     toast.innerHTML = `
         <span class="ui-toast-icon" aria-hidden="true">${icons[kind]}</span>
         <p>${escapeHtml(message)}</p>
+        ${options.action ? `<button type="button" class="ui-btn ui-btn-sm ui-toast-action"${options.action.ariaLabel ? ` aria-label="${escapeHtml(options.action.ariaLabel)}"` : ''}>${escapeHtml(options.action.label)}</button>` : ''}
         <button type="button" onclick="this.parentElement.remove()" class="ui-icon-btn" title="Close" aria-label="Close">×</button>
     `;
+    // An action still running holds the toast like the pointer or the keyboard does
+    let busy = false;
+    // Set below where the toast has a timer (not for one that stays until closed)
+    let holdNow = () => {};
+    if (options.action) {
+        const button = toast.querySelector('.ui-toast-action');
+        button.addEventListener('click', () => {
+            if (busy) return;
+            const result = options.action.onAction();
+            if (!result || typeof result.then !== 'function') { toast.remove(); return; }
+            // Until it is done the toast stays, with the keyboard in it: what comes next
+            // (a message, Retry) takes the keyboard over from here
+            busy = true;
+            holdNow();
+            button.setAttribute('aria-disabled', 'true');
+            Promise.resolve(result).catch(() => {}).finally(() => { if (toast.isConnected) toast.remove(); });
+        });
+    }
 
     document.body.appendChild(toast);
+    if (options.duration === Infinity) {
+        if (focusWasInIt) toast.querySelector('button').focus({ preventScroll: true });
+        return;
+    }
 
-    // It goes after 4 seconds, but waits while the pointer or the focus is on it,
-    // and then gives the rest of its time (at least 1.5 seconds) to read it
-    let left = 4000;
+    // It goes after 4 seconds (or its own duration), but waits while the pointer or the
+    // focus is on it, and then gives the rest of its time (at least 1.5 seconds) to read it
+    let left = options.duration || 4000;
     let started = Date.now();
     let timer = null;
-    const hold = () => toast.matches(':hover') || toast.contains(document.activeElement);
+    const hold = () => busy || toast.matches(':hover') || toast.contains(document.activeElement);
     let fading = false;
+    let removing = null;
     const fade = () => {
         if (!toast.parentElement) return;
+        // An action still running: the toast waits for it (its end removes the toast)
+        if (busy) { timer = null; return; }
         fading = true;
         toast.style.opacity = '0';
         toast.style.transition = 'opacity 0.3s';
-        setTimeout(() => toast.remove(), 300);
+        removing = setTimeout(() => toast.remove(), 300);
     };
     const run = () => {
         clearTimeout(timer);
@@ -685,7 +725,17 @@ function showToast(message, type = 'info') {
         timer = setTimeout(fade, left);
     };
     const pause = () => {
-        if (timer === null || fading) return;
+        // Caught while it fades (the pointer, the keyboard, a click on its action): it comes back
+        if (fading) {
+            clearTimeout(removing);
+            fading = false;
+            timer = null;
+            left = 1500;
+            toast.style.opacity = '';
+            toast.style.transition = '';
+            return;
+        }
+        if (timer === null) return;
         clearTimeout(timer);
         timer = null;
         left = Math.max(1500, left - (Date.now() - started));
@@ -693,11 +743,13 @@ function showToast(message, type = 'info') {
         toast.style.transition = '';
     };
     const resume = () => { if (timer === null && !hold()) run(); };
+    holdNow = pause;
     toast.addEventListener('mouseenter', pause);
     toast.addEventListener('focusin', pause);
     toast.addEventListener('mouseleave', () => setTimeout(resume, 0));
     toast.addEventListener('focusout', () => setTimeout(resume, 0));
-    run();
+    if (focusWasInIt) toast.querySelector('button').focus({ preventScroll: true });
+    if (!hold()) run();
 }
 
 // =============================================================================
@@ -749,7 +801,7 @@ function showConfirmModal({ title = 'Confirm', message = 'Are you sure?', confir
             resolve(result);
         }
         // Escape (through the layers in router.js) and a click outside cancel
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+        overlay.addEventListener('click', (e) => { if (uiBackdropClick(e)) cleanup(false); });
         cancelBtn.addEventListener('click', () => cleanup(false));
         okBtn.addEventListener('click', () => cleanup(true));
         setTimeout(() => (focusCancel ? cancelBtn : okBtn).focus(), 100);
@@ -790,7 +842,7 @@ function showChoiceModal({ title, message, choices, cancelText = 'Cancel' }) {
             resolve(result);
         }
         choiceModalClose = done;
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+        overlay.addEventListener('click', (e) => { if (uiBackdropClick(e)) done(null); });
         overlay.querySelector('[data-cancel]').addEventListener('click', () => done(null));
         overlay.querySelectorAll('[data-choice]').forEach(btn => btn.addEventListener('click', () => done(choices[Number(btn.dataset.choice)].value)));
         setTimeout(() => overlay.querySelector('[data-cancel]').focus(), 50);
@@ -1101,6 +1153,13 @@ function uiSortValue(cell) {
     return { n: null, t };
 }
 
+// The cell a row holds for a column: a helper element in a row (the phone's
+// line break) is not a cell
+function uiSortCell(row, index) {
+    if (!row || index < 0) return null;
+    return [...row.children].filter(c => !c.classList.contains('ui-tr-break'))[index] || null;
+}
+
 // Rows travel with what follows them up to the next row (an opened detail)
 function uiSortUnits(table) {
     if (table.tagName === 'TABLE') {
@@ -1122,11 +1181,45 @@ function uiSortUnits(table) {
     return segments;
 }
 
+// Each row keeps the place it was drawn in, so the list's own order can come
+// back (Default order). Rows drawn anew come in that order; it tells whether
+// any row is new since the list was last sorted. A row drawn again on its own
+// (one domain checked again) finds its place by its data-sort-id, else by its
+// first cell's text.
+function uiSortRowId(row) {
+    if (row.dataset.sortId !== undefined) return row.dataset.sortId;
+    const first = uiSortCell(row, 0);
+    return first ? first.textContent.replace(/\s+/g, ' ').trim() : '';
+}
+function uiSortPositions(table) {
+    const units = uiSortUnits(table).flatMap(seg => seg.units);
+    const fresh = units.filter(u => u[0].dataset.sortPos === undefined);
+    if (!fresh.length) return false;
+    if (fresh.length === units.length || !table._sortPlaces) table._sortPlaces = new Map();
+    const places = table._sortPlaces;
+    if (fresh.length === units.length) {
+        units.forEach((u, i) => { u[0].dataset.sortPos = String(i); places.set(uiSortRowId(u[0]), i); });
+        return true;
+    }
+    let next = Math.max(...units.filter(u => u[0].dataset.sortPos !== undefined).map(u => Number(u[0].dataset.sortPos))) + 1;
+    for (const u of fresh) {
+        const known = places.get(uiSortRowId(u[0]));
+        const pos = known !== undefined ? known : next++;
+        u[0].dataset.sortPos = String(pos);
+        places.set(uiSortRowId(u[0]), pos);
+    }
+    return true;
+}
+
+// index -1 puts the list's own order back
 function uiApplyTableSort(table, index, dir) {
     const heads = uiSortHeads(table);
     heads.forEach((h, i) => { if (uiSortable(table, h)) uiSetSortState(h, i === index ? (dir > 0 ? 'ascending' : 'descending') : 'none'); });
+    uiSortPositions(table);
     for (const seg of uiSortUnits(table)) {
-        const keyed = seg.units.map((unit, pos) => ({ unit, pos, v: uiSortValue(unit[0].children[index]) }));
+        const keyed = seg.units.map((unit, pos) => ({ unit, pos,
+            v: index < 0 ? { n: Number(unit[0].dataset.sortPos), t: '' } : uiSortValue(uiSortCell(unit[0], index)) }));
+        if (index < 0) dir = 1;
         keyed.sort((a, b) => {
             // Empty values go last either way
             const ae = a.v.n === null && !a.v.t, be = b.v.n === null && !b.v.t;
@@ -1141,19 +1234,38 @@ function uiApplyTableSort(table, index, dir) {
         for (const { unit } of keyed) for (const el of unit) { seg.parent.insertBefore(el, anchor); anchor = el.nextSibling; }
         for (const el of seg.fixed) if (seg.parent.tagName === 'TBODY') seg.parent.appendChild(el);
     }
-    table.dataset.sortedBy = `${index}:${dir}`;
+    if (index < 0) delete table.dataset.sortedBy;
+    else table.dataset.sortedBy = `${index}:${dir}`;
+}
+
+// What a column holds, from its data-sort-kind: it names the two orders in the
+// Sort menu and says which one a column starts with. Without it the orders are
+// Ascending and Descending, and numbers start high to low.
+const UI_SORT_KINDS = {
+    text: { asc: 'A to Z', desc: 'Z to A', first: 1 },
+    number: { asc: 'Low to high', desc: 'High to low', first: -1 },
+    date: { asc: 'Oldest first', desc: 'Newest first', first: -1 },
+};
+function uiSortWords(cell) {
+    return UI_SORT_KINDS[cell && cell.dataset.sortKind] || { asc: 'Ascending', desc: 'Descending' };
+}
+function uiSortFirstDir(table, cell) {
+    const kind = UI_SORT_KINDS[cell.dataset.sortKind];
+    if (kind) return kind.first;
+    const index = uiSortHeads(table).indexOf(cell);
+    const numeric = uiSortUnits(table).some(seg => seg.units.some(u => uiSortValue(uiSortCell(u[0], index)).n !== null));
+    return numeric ? -1 : 1;
 }
 
 function uiClearTableSort(owner) {
     for (const key of [...uiTableSorts.keys()]) if (key.startsWith(`${owner}|`)) uiTableSorts.delete(key);
 }
 
-// One way to sort, for a header's click or keys and for the phone's Sort picker:
-// the sorted column turns around, another column starts high to low for numbers
-// and A to Z for text
+// A header's click or keys: the sorted column turns around, another column
+// starts in its own first order (uiSortFirstDir)
 // A list sorted on the server is drawn again: the focus goes back to the same
-// header, or to the phone's Sort picker, once the new list is there
-let uiSortFocus = null;   // { owner, nth, label, phone, server, from, until }
+// header once the new list is there
+let uiSortFocus = null;   // { owner, nth, label, server, from, until }
 function uiSortOwner(table) {
     const owner = table.id ? table : table.closest('[id]');
     return owner ? owner.id : '';
@@ -1164,23 +1276,64 @@ function uiSortNth(table) {
     return [...document.querySelectorAll('.ui-table, table')].filter(t => uiSortOwner(t) === owner).indexOf(table);
 }
 function uiSortBy(table, cell) {
+    const current = uiSortState(cell);
+    let dir = current === 'descending' ? 1 : current === 'ascending' ? -1 : uiSortFirstDir(table, cell);
+    // A list shown in the order it arrives in (data-sort-default): its column turns around too
+    if (current === 'none' && !table.hasAttribute('data-sort-handler') && table.dataset.sortDefault) {
+        const heads = uiSortHeads(table);
+        const fallback = uiSortDefault(table, heads);
+        if (fallback && fallback.cell === cell && heads.every(h => uiSortState(h) === 'none')) dir = -fallback.dir;
+    }
+    uiSortSet(table, cell, dir);
+}
+
+// Sort by a column in an order (1 low to high, -1 high to low), from a header or
+// the Sort menu. The headers show it at once, also while a list sorted on the
+// server is on its way, so a second choice builds on the first.
+function uiSortSet(table, cell, dir) {
     const active = document.activeElement;
-    const box = table.previousElementSibling;
-    if (active && (cell.contains(active) || (box && box.classList.contains('ui-phone-sort') && box.contains(active)))) {
-        uiSortFocus = { owner: uiSortOwner(table), nth: uiSortNth(table), label: uiSortLabel(cell), phone: !cell.contains(active),
+    if (active && cell.contains(active)) {
+        uiSortFocus = { owner: uiSortOwner(table), nth: uiSortNth(table), label: uiSortLabel(cell),
             server: table.hasAttribute('data-sort-handler'), from: active, until: Date.now() + 5000 };
     }
-    const index = uiSortHeads(table).indexOf(cell);
-    const current = uiSortState(cell);
-    const numeric = uiSortUnits(table).some(seg => seg.units.some(u => uiSortValue(u[0].children[index]).n !== null));
-    const dir = current === 'descending' ? 1 : current === 'ascending' ? -1 : (numeric ? -1 : 1);
+    const heads = uiSortHeads(table);
+    const index = heads.indexOf(cell);
     const handler = table.getAttribute('data-sort-handler');
+    // The order a list sorted in the page arrives in is its own order, exactly
+    // (rows equal in that column keep their places)
+    const fallback = !handler && table.dataset.sortDefault ? uiSortDefault(table, heads) : null;
+    if (fallback && fallback.cell === cell && fallback.dir === dir) { uiSortReset(table); return; }
+    const before = heads.map(uiSortState);
+    heads.forEach(h => { if (uiSortable(table, h)) uiSetSortState(h, h === cell ? (dir > 0 ? 'ascending' : 'descending') : 'none'); });
+    // The Sort button shows it too, before a list sorted on the server comes back
+    if (typeof requestAnimationFrame === 'function' && !uiTableSortQueued) { uiTableSortQueued = true; requestAnimationFrame(uiRefreshTableSorts); }
     if (handler) {
+        // A list sorted on the server comes back drawn anew; when it does not
+        // (the request failed), its headers go back to the order still shown
+        // Choices in a row before any answer keep the order the rows still show
+        if (table._sortUndo) before.splice(0, before.length, ...table._sortUndo);
+        table._sortUndo = before;
+        const token = table._sortToken = {};
+        if (typeof setTimeout === 'function') setTimeout(() => {
+            if (!table.isConnected || table._sortToken !== token) return;
+            delete table._sortUndo;
+            delete table._sortToken;
+            heads.forEach((h, i) => { if (uiSortable(table, h)) uiSetSortState(h, before[i]); });
+            if (typeof uiRefreshTableSorts === 'function') uiRefreshTableSorts();
+        }, uiSortWait);
         if (typeof window[handler] === 'function') window[handler](cell.getAttribute('data-sort-key'), dir > 0 ? 'asc' : 'desc');
         return;
     }
     uiTableSorts.set(uiTableKey(table), { index, dir });
     uiApplyTableSort(table, index, dir);
+}
+// How long a list sorted on the server has to come back before its headers go back
+let uiSortWait = 8000;
+
+// Default order: the list's own order again, and no remembered order
+function uiSortReset(table) {
+    uiTableSorts.delete(uiTableKey(table));
+    uiApplyTableSort(table, -1, 1);
 }
 
 document.addEventListener('click', event => {
@@ -1207,54 +1360,146 @@ document.addEventListener('keydown', event => {
 // row's click handler asks uiRowHeld(event) first. A plain click, also on text
 // already selected, and Enter or Space (a click with no mouse, detail 0) still
 // open it.
-let uiRowPress = null;
-document.addEventListener('mousedown', event => { uiRowPress = { x: event.clientX, y: event.clientY }; }, true);
+let uiPress = null;
+document.addEventListener('mousedown', event => {
+    uiPress = { x: event.clientX, y: event.clientY, target: event.target, down: true };
+    // The first click of a double click selected a whole log line; clear it so
+    // the browser selects the word (Shift keeps the selection it extends)
+    if (event.detail > 1 && !event.shiftKey && event.target instanceof Element && event.target.closest('[data-line-select]')) window.getSelection().removeAllRanges();
+}, true);
+const uiPressEnd = () => { if (uiPress) uiPress.down = false; };
+document.addEventListener('mouseup', uiPressEnd, true);
+// A release outside the window never reaches the page: moving back with no
+// button down, or leaving the window, ends the press too
+document.addEventListener('mousemove', event => { if (!event.buttons) uiPressEnd(); }, true);
+if (typeof window.addEventListener === 'function') window.addEventListener('blur', uiPressEnd);
+function uiPressMoved(event) {
+    return Boolean(uiPress) && Math.hypot(event.clientX - uiPress.x, event.clientY - uiPress.y) > 3;
+}
 function uiRowHeld(event) {
     if (!event || !event.detail || !(event.currentTarget instanceof Element)) return false;
     const selection = window.getSelection && window.getSelection();
     if (!selection || !selection.rangeCount || !String(selection) || !selection.getRangeAt(0).intersectsNode(event.currentTarget)) return false;
-    const dragged = uiRowPress && Math.hypot(event.clientX - uiRowPress.x, event.clientY - uiRowPress.y) > 3;
-    return Boolean(dragged) || event.detail > 1 || event.shiftKey;
+    return uiPressMoved(event) || event.detail > 1 || event.shiftKey;
 }
 
-// Phones hide a list's header row, so a list without a sort control of its own
-// gets a Sort picker above it (data-phone-sort="off": the page has its own)
-let uiPhoneSortSeq = 0;
-function uiPhoneSortSync(table, heads) {
-    if (table.matches('[data-phone-sort="off"]') || !table.matches('.ui-stack, .ui-dm-cards')) return false;
+// A click on a dialog's backdrop closes it only when the press started on the
+// backdrop too. A drag that selects text in the dialog and ends outside it reaches
+// the backdrop as a click, and leaves the dialog open. A click with no mouse
+// (detail 0) is taken as it is.
+function uiBackdropClick(event, backdrop = event.currentTarget) {
+    if (event.target !== backdrop) return false;
+    return !event.detail || !uiPress || uiPress.target === backdrop;
+}
+
+// The Sort button of a list: an icon next to the list's search, or at the end
+// of its header row, that opens a menu with two groups, the column ("Sort by")
+// and its order. A list names where it goes with data-sort-at (the id of its
+// search field, or of the element it ends), says the order it arrives in with
+// data-sort-default="<column>:asc|desc" (else the menu offers "Default order"),
+// and data-sort-icon="off" leaves it out. Its headers keep sorting; the two
+// always show the same order.
+function uiSortControlKey(table) {
+    const nth = uiSortNth(table);
+    return `${uiSortOwner(table)}${nth > 0 ? `-${nth}` : ''}`;
+}
+function uiSortTableFor(key) {
+    return [...document.querySelectorAll('.ui-table, table')].find(t => uiSortControlKey(t) === key) || null;
+}
+function uiSortDefault(table, heads) {
+    const [label, order] = (table.dataset.sortDefault || '').split(':');
+    const cell = label ? heads.find(h => uiSortLabel(h) === label) : null;
+    return cell ? { cell, dir: order === 'asc' ? 1 : -1 } : null;
+}
+// The order the list shows: a sorted header, else the order it arrived in
+function uiSortCurrent(table, heads) {
+    const cell = heads.find(h => uiSortable(table, h) && uiSortState(h) !== 'none');
+    if (cell) return { cell, dir: uiSortState(cell) === 'ascending' ? 1 : -1 };
+    return uiSortDefault(table, heads);
+}
+function uiSortSaid(current) {
+    if (!current) return 'Sort: Default order';
+    const words = uiSortWords(current.cell);
+    return `Sort: ${uiSortLabel(current.cell)}, ${current.dir > 0 ? words.asc : words.desc}`;
+}
+const UI_SORT_ICON = '<svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16m0 0l-3-3m3 3l3-3M17 20V4m0 0l-3 3m3-3l3 3"></path></svg>';
+
+function uiSortControlSync(table, heads) {
+    const key = uiSortControlKey(table);
+    let slot = [...document.querySelectorAll('.ui-sort-slot')].find(el => el.dataset.sortFor === key);
+    const at = table.dataset.sortAt ? document.getElementById(table.dataset.sortAt) : null;
     const sortable = heads.filter(h => uiSortable(table, h));
-    let box = table.previousElementSibling;
-    if (!sortable.length) {
-        if (box && box.classList.contains('ui-phone-sort')) { box.remove(); return true; }
+    if (!at || !sortable.length || table.matches('[data-sort-icon="off"]')) {
+        if (slot) { slot.remove(); return true; }
         return false;
     }
-    if (!box || !box.classList.contains('ui-phone-sort')) {
-        box = document.createElement('div');
-        box.className = 'ui-phone-sort';
-        // Named after the list's owner, so the picker keeps its id when the list is drawn again
-        const owner = uiSortOwner(table);
-        const nth = uiSortNth(table);
-        const name = owner ? `ui-phone-sort-${owner}${nth > 0 ? `-${nth}` : ''}` : '';
-        const id = name && !document.getElementById(name) ? name : `ui-phone-sort-${++uiPhoneSortSeq}`;
-        box.innerHTML = `<select id="${id}" class="hidden" data-picker-label="Sort" data-no-filter onchange="uiPhoneSortPick(this)"></select>`;
-        table.before(box);
+    let changed = false;
+    if (!slot) {
+        slot = document.createElement('span');
+        slot.className = 'ui-sort-slot';
+        slot.dataset.sortFor = key;
     }
-    const select = box.querySelector('select');
-    const on = sortable.find(h => uiSortState(h) !== 'none');
-    const arrow = h => (uiSortState(h) === 'descending' ? ' ↓' : ' ↑');
-    const sig = `${sortable.map(uiSortLabel).join('|')}#${on ? uiSortLabel(on) + uiSortState(on) : ''}`;
-    if (select.dataset.sig === sig) return false;
-    select.dataset.sig = sig;
-    select.innerHTML = (on ? '' : '<option value="" data-short="Default">Default order</option>')
-        + sortable.map(h => `<option value="${heads.indexOf(h)}"${h === on ? ` selected data-short="${escapeHtml(uiSortLabel(h) + arrow(h))}"` : ''}>${escapeHtml(uiSortLabel(h))}</option>`).join('');
+    // Next to the search field, else at the end of the element named
+    const search = at.closest('.ui-search');
+    if (search ? search.nextElementSibling !== slot : slot.parentElement !== at || at.lastElementChild !== slot) {
+        if (search) search.after(slot); else at.appendChild(slot);
+        changed = true;
+    }
+    const id = `ui-sort-${key.replace(/[^\w-]/g, '_')}`;
+    const fallback = uiSortDefault(table, heads);
+    const current = uiSortCurrent(table, heads);
+    const set = !!current && !(fallback && current.cell === fallback.cell && current.dir === fallback.dir);
+    const columns = sortable.map(h => uiSortLabel(h)).join('|');
+    // The menu is built once per set of columns, then kept up to date in place,
+    // so a choice in an open menu keeps the focus on it
+    if (slot.dataset.columns !== columns || !slot.querySelector('.ui-picker')) {
+        slot.dataset.columns = columns;
+        const listName = (table.dataset.sortName || '').trim();
+        const panel = `<fieldset class="ui-sort-group"><legend>Sort by</legend>
+            ${fallback ? '' : `<label class="ui-sort-opt"><input type="radio" name="${id}-by" value="" onchange="uiSortPick('${escapeJsArg(key)}', 'by', this.value)"><span>Default order</span></label>`}
+            ${sortable.map(h => `<label class="ui-sort-opt"><input type="radio" name="${id}-by" value="${heads.indexOf(h)}" onchange="uiSortPick('${escapeJsArg(key)}', 'by', this.value)"><span>${escapeHtml(uiSortLabel(h))}</span></label>`).join('')}
+            </fieldset>
+            <fieldset class="ui-sort-group ui-sort-dir"><legend>Order</legend>
+            <label class="ui-sort-opt"><input type="radio" name="${id}-dir" value="1" onchange="uiSortPick('${escapeJsArg(key)}', 'dir', this.value)"><span data-dir="asc"></span></label>
+            <label class="ui-sort-opt"><input type="radio" name="${id}-dir" value="-1" onchange="uiSortPick('${escapeJsArg(key)}', 'dir', this.value)"><span data-dir="desc"></span></label>
+            </fieldset>`;
+        slot.innerHTML = uiPicker({ id, label: 'Sort', icon: true, panel, panelLabel: listName ? `Sort ${listName}` : 'Sort', panelClass: 'ui-sort-panel' });
+        slot.dataset.sig = '';
+        changed = true;
+    }
+    const sig = `${current ? heads.indexOf(current.cell) + ':' + current.dir : ''}|${set}`;
+    if (slot.dataset.sig === sig) return changed;
+    slot.dataset.sig = sig;
+    const button = slot.querySelector('.ui-picker-btn');
+    const said = uiSortSaid(current);
+    button.setAttribute('aria-label', said);
+    button.title = said;
+    button.classList.toggle('is-set', set);
+    const by = current ? String(heads.indexOf(current.cell)) : '';
+    slot.querySelectorAll(`input[name="${id}-by"]`).forEach(r => { r.checked = r.value === by; });
+    const dirs = slot.querySelector('.ui-sort-dir');
+    dirs.disabled = !current;
+    const words = uiSortWords(current && current.cell);
+    dirs.querySelector('[data-dir="asc"]').textContent = words.asc;
+    dirs.querySelector('[data-dir="desc"]').textContent = words.desc;
+    dirs.querySelectorAll('input').forEach(r => { r.checked = !!current && Number(r.value) === current.dir; });
     return true;
 }
-function uiPhoneSortPick(select) {
-    const box = select.closest('.ui-phone-sort');
-    const table = box && box.nextElementSibling;
-    if (!table || select.value === '') return;
-    const cell = uiSortHeads(table)[Number(select.value)];
-    if (cell && uiSortable(table, cell)) uiSortBy(table, cell);
+
+// A choice in the Sort menu: a column starts in its own first order, an order
+// applies to the column shown, and "Default order" brings the list's own order back
+function uiSortPick(key, group, value) {
+    const table = uiSortTableFor(key);
+    if (!table) return;
+    const heads = uiSortHeads(table);
+    if (group === 'by') {
+        if (value === '') { uiSortReset(table); return; }
+        const cell = heads[Number(value)];
+        if (cell && uiSortable(table, cell)) uiSortSet(table, cell, uiSortFirstDir(table, cell));
+        return;
+    }
+    const current = uiSortCurrent(table, heads);
+    if (current) uiSortSet(table, current.cell, Number(value) > 0 ? 1 : -1);
 }
 
 // Mark the sortable headers, and put a remembered order back after a refresh
@@ -1262,6 +1507,7 @@ let uiTableSortQueued = false;
 function uiRefreshTableSorts() {
     uiTableSortQueued = false;
     let pickers = false;
+    const seen = new Set();
     document.querySelectorAll('.ui-table, table').forEach(table => {
         const heads = uiSortHeads(table);
         heads.forEach(h => {
@@ -1270,12 +1516,17 @@ function uiRefreshTableSorts() {
             uiSetSortState(h, uiSortState(h));
         });
         if (!table.hasAttribute('data-sort-handler')) {
+            // Rows drawn anew in the same list (a filter, a refresh) are not sorted yet
+            if (uiSortPositions(table)) delete table.dataset.sortedBy;
             const state = uiTableSorts.get(uiTableKey(table));
             if (state && table.dataset.sortedBy !== `${state.index}:${state.dir}`) uiApplyTableSort(table, state.index, state.dir);
         }
-        if (uiPhoneSortSync(table, heads)) pickers = true;
+        seen.add(uiSortControlKey(table));
+        if (uiSortControlSync(table, heads)) pickers = true;
     });
-    if (pickers && typeof uiFilterBarSync === 'function') uiFilterBarSync();
+    // A Sort button whose list is gone goes too
+    document.querySelectorAll('.ui-sort-slot').forEach(slot => { if (!seen.has(slot.dataset.sortFor)) slot.remove(); });
+    if (pickers) uiPickerRefocus();
     uiSortFocusBack();
 }
 function uiSortFocusBack() {
@@ -1290,15 +1541,13 @@ function uiSortFocusBack() {
     if (active && active !== document.body) return;
     const table = [...document.querySelectorAll('.ui-table, table')].filter(t => uiSortOwner(t) === want.owner)[want.nth];
     if (!table) return;   // the answer is no list (nothing found, an error): the layers place the focus
-    const target = want.phone
-        ? table.previousElementSibling?.querySelector?.('.ui-picker-btn')
-        : uiSortHeads(table).find(h => uiSortLabel(h) === want.label)?.querySelector('.ui-sort-btn');
+    const target = uiSortHeads(table).find(h => uiSortLabel(h) === want.label)?.querySelector('.ui-sort-btn');
     if (target && target.getClientRects().length) target.focus({ preventScroll: true });
 }
 // Moving on to anything else ends the wait for the list
 document.addEventListener('focusin', event => {
     if (uiSortFocus && event.target !== uiSortFocus.from && event.target instanceof Element
-        && !event.target.closest('.ui-tr-head, thead, .ui-phone-sort')) uiSortFocus = null;
+        && !event.target.closest('.ui-tr-head, thead')) uiSortFocus = null;
 }, true);
 document.addEventListener('DOMContentLoaded', () => {
     new MutationObserver(() => {
@@ -1308,6 +1557,87 @@ document.addEventListener('DOMContentLoaded', () => {
     }).observe(document.body, { subtree: true, childList: true });
     uiRefreshTableSorts();
 });
+
+// A log box with data-line-select="<line selector>": a plain click on a line
+// selects the whole line and puts a Copy button at its end. A drag, a double or
+// triple click and Shift+click select as usual.
+const UI_COPY_PATH = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>';
+document.addEventListener('click', event => {
+    const box = event.target instanceof Element && event.target.closest('[data-line-select]');
+    if (!box || event.target.closest('button, a') || event.detail !== 1 || event.shiftKey || uiPressMoved(event)) return;
+    const line = event.target.closest(box.dataset.lineSelect);
+    if (!line || !box.contains(line)) return;
+    uiLineCopyRemove();
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    // After the range, so the button is not part of the selection
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'ui-line-copy';
+    copy.title = 'Copy line';
+    copy.setAttribute('aria-label', 'Copy line');
+    copy.innerHTML = `<svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">${UI_COPY_PATH}</svg>`;
+    // A press on the button keeps the line selected
+    copy.addEventListener('mousedown', e => e.preventDefault());
+    copy.addEventListener('click', e => { e.stopPropagation(); uiLineCopy(line, copy); });
+    line.appendChild(copy);
+});
+
+function uiLineCopyRemove() {
+    document.querySelectorAll('.ui-line-copy').forEach(button => button.remove());
+}
+
+// The Copy button goes once its line is no longer the selection
+document.addEventListener('selectionchange', () => {
+    const copy = document.querySelector('.ui-line-copy');
+    if (!copy) return;
+    const line = copy.parentElement;
+    if (!line || String(window.getSelection()).trim() !== line.textContent.trim()) copy.remove();
+});
+
+async function uiLineCopy(line, button) {
+    const text = line.textContent;
+    let copied = false;
+    try {
+        if (navigator.clipboard) { await navigator.clipboard.writeText(text); copied = true; }
+    } catch (e) { /* falls back to the selection below */ }
+    // Without HTTPS the browser offers no clipboard API: copy the line's text
+    // through a hidden field, then put the line selection back
+    if (!copied) {
+        const field = document.createElement('textarea');
+        field.value = text;
+        field.setAttribute('readonly', '');
+        field.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+        document.body.appendChild(field);
+        field.select();
+        try { copied = document.execCommand('copy'); } catch (e) { copied = false; }
+        field.remove();
+        if (line.isConnected) {
+            const range = document.createRange();
+            range.selectNodeContents(line);
+            range.setEndBefore(button);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    }
+    if (!copied) { showToast('Could not copy. Press Ctrl+C to copy the selected line.', 'error'); return; }
+    showToast('Line copied', 'success');
+    button.classList.add('is-copied');
+    button.querySelector('svg').innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>';
+}
+
+// True while the user selects or has selected text in box, so live updates
+// leave that text where it is
+function uiTextHeld(box) {
+    if (!box) return false;
+    if (uiPress && uiPress.down && uiPress.target instanceof Node && box.contains(uiPress.target)) return true;
+    const selection = window.getSelection();
+    return Boolean(selection && selection.rangeCount && String(selection) && selection.getRangeAt(0).intersectsNode(box));
+}
 
 // =============================================================================
 // SHEET - a panel from the bottom of the screen on phones. Its handle and head
@@ -1528,17 +1858,509 @@ function uiFilterBarSync() {
         });
         const fields = [...bar.querySelectorAll('input, select')].filter(el => !el.closest('.ui-picker-panel') || el.matches('[data-filter-default]'));
         const more = bar.querySelector('.ui-fbar-more');
-        const badge = bar.querySelector('.ui-filters-toggle .ui-tab-n');
+        const badge = bar.querySelector('.ui-filters-toggle .ui-msg-filter-n');
         if (more && badge) {
             const changed = [...more.querySelectorAll('input, select')].filter(uiFilterChanged).length;
             badge.textContent = changed ? String(changed) : '';
             badge.classList.toggle('hidden', !changed);
+            // The count is in the button's name too, not only on the screen
+            const name = changed ? `Filters, ${changed} in use` : 'Filters';
+            const toggle = badge.closest('.ui-filters-toggle');
+            if (toggle.getAttribute('aria-label') !== name) { toggle.setAttribute('aria-label', name); toggle.title = name; }
         }
         const summary = bar.nextElementSibling;
         const clear = summary && summary.classList.contains('ui-list-summary') && summary.querySelector('.ui-clear-filters');
         if (clear) clear.classList.toggle('hidden', !fields.some(uiFilterChanged));
     });
     uiPickerRefocus();
+}
+
+// =============================================================================
+// Time zoom on a bar chart: drag across the bars to zoom into that span (a
+// mouse), pinch on the chart (a touch screen), Ctrl+wheel or a trackpad pinch
+// (which Chromium sends as a Ctrl wheel) to zoom at the pointer, one finger or
+// a drag to move a zoomed chart; a tap or click on a bar stays a pick. Buttons
+// beside the chart do the same without a gesture (uiTimeZoomStep).
+//   uiTimeZoom(box, { bars, span, limits, preview, change }) -> { destroy, busy }
+//     bars():   the bar elements in time order, each with data-start / data-end (ms)
+//     span():   the visible { from, to } (ms); limits(): { from, to, min }
+//     preview(span, kind): during a gesture (kind: 'pinch' | 'pan' | 'select' | 'wheel')
+//     change(span): at its end; cancel() when it is called off
+// The chart keeps touch-action: pan-y, so the page still scrolls up and down
+// under a finger; a pinch and a sideways drag come to the chart.
+// =============================================================================
+function uiTimeZoomClamp(span, limits) {
+    const want = span.to - span.from;
+    const len = Math.max(limits.min, Math.min(want, limits.to - limits.from));
+    // Made longer or shorter around its middle, then kept inside the data
+    const from = Math.max(limits.from, Math.min(span.from - (len - want) / 2, limits.to - len));
+    return { from, to: from + len };
+}
+
+// A step from the buttons: in (0.5), out (2), earlier (-1) or later (+1) by half the span
+function uiTimeZoomStep(span, limits, step) {
+    const len = span.to - span.from;
+    if (step === 'in' || step === 'out') {
+        const mid = (span.from + span.to) / 2;
+        const next = step === 'in' ? len / 2 : len * 2;
+        return uiTimeZoomClamp({ from: mid - next / 2, to: mid + next / 2 }, limits);
+    }
+    const by = (step === 'later' ? 1 : -1) * len / 2;
+    return uiTimeZoomClamp({ from: span.from + by, to: span.to + by }, limits);
+}
+
+function uiTimeZoom(box, opts) {
+    const pointers = new Map();   // pointerId -> { x, y }
+    let state = 'idle';           // idle | pressing | selecting | panning | pinching
+    let start = null;             // what the gesture started from
+    let shown = null;             // the span previewed so far
+    let swallow = false;          // the click that ends a gesture is not a pick
+    let wheelTimer = null;
+    // Where the chart sits in the page, without the stretch a preview puts on
+    // it (offsets ignore transforms): a pinch or a wheel keeps one frame
+    const rect = () => {
+        const parent = box.offsetParent;
+        if (!parent || !box.offsetWidth) return box.getBoundingClientRect();
+        const p = parent.getBoundingClientRect();
+        return { left: p.left + parent.clientLeft + box.offsetLeft, width: box.offsetWidth };
+    };
+    const timeAt = (x, span) => {
+        const r = rect();
+        return span.from + Math.max(0, Math.min(1, (x - r.left) / (r.width || 1))) * (span.to - span.from);
+    };
+    // The bar under an x, or the nearest one: its own edges, not a straight line through time
+    const barAt = x => {
+        const bars = opts.bars();
+        let best = null, gap = Infinity;
+        for (const bar of bars) {
+            const b = bar.getBoundingClientRect();
+            const d = x < b.left ? b.left - x : x > b.right ? x - b.right : 0;
+            if (d < gap) { gap = d; best = bar; }
+        }
+        return best;
+    };
+    const zoomed = () => { const s = opts.span(), l = opts.limits(); return s.to - s.from < l.to - l.from - 1; };
+    const preview = (span, kind) => { shown = span; opts.preview(span, kind); };
+    const finish = () => {
+        const done = shown;
+        state = 'idle'; start = null; shown = null;
+        if (done) { swallow = true; opts.change(done); }
+    };
+    const cancel = () => {
+        const was = state !== 'idle' && state !== 'pressing';
+        state = 'idle'; start = null; shown = null;
+        if (was && opts.cancel) opts.cancel();
+    };
+    const twoFingers = () => {
+        const [a, b] = [...pointers.values()];
+        return { mid: (a.x + b.x) / 2, dist: Math.max(8, Math.hypot(a.x - b.x, a.y - b.y)) };
+    };
+    const beginPinch = () => {
+        const f = twoFingers();
+        state = 'pinching';
+        start = { span: shown || opts.span(), mid: f.mid, dist: f.dist };
+    };
+    const beginPan = p => { state = 'panning'; start = { span: shown || opts.span(), x: p.x }; };
+
+    const onDown = event => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (pointers.size === 2) {
+            // A second finger: a pinch, from wherever the first one got to
+            try { box.setPointerCapture(event.pointerId); } catch (e) { /* the pointer may be gone */ }
+            beginPinch();
+        } else if (pointers.size === 1) {
+            state = 'pressing';
+            start = { x: event.clientX, y: event.clientY };
+        }
+    };
+    const onMove = event => {
+        if (!pointers.has(event.pointerId)) return;
+        pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const p = pointers.get(event.pointerId);
+        if (state === 'pressing') {
+            const dx = p.x - start.x, dy = p.y - start.y;
+            if (Math.hypot(dx, dy) < 6) return;
+            // Mostly up or down: the page scrolls, the chart lets it
+            if (Math.abs(dy) > Math.abs(dx)) { state = 'idle'; pointers.delete(event.pointerId); return; }
+            try { box.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+            if (zoomed()) beginPan({ x: start.x });
+            else { state = 'selecting'; start = { x: start.x, span: opts.span() }; }
+        }
+        if (state === 'pinching' && pointers.size >= 2) {
+            const f = twoFingers();
+            const s = start.span, len = s.to - s.from;
+            const anchor = timeAt(start.mid, s);
+            const next = len * start.dist / f.dist;
+            const ratio = (anchor - s.from) / len;
+            // The time under the fingers stays under them, and follows their middle
+            const shift = (f.mid - start.mid) / (rect().width || 1) * next;
+            preview(uiTimeZoomClamp({ from: anchor - ratio * next - shift, to: anchor - ratio * next - shift + next }, opts.limits()), 'pinch');
+        } else if (state === 'panning') {
+            const s = start.span, len = s.to - s.from;
+            const by = -(p.x - start.x) / (rect().width || 1) * len;
+            preview(uiTimeZoomClamp({ from: s.from + by, to: s.to + by }, opts.limits()), 'pan');
+        } else if (state === 'selecting') {
+            const a = barAt(start.x), b = barAt(p.x);
+            if (!a || !b) return;
+            const from = Math.min(Number(a.dataset.start), Number(b.dataset.start));
+            const to = Math.max(Number(a.dataset.end), Number(b.dataset.end));
+            preview({ from, to, x1: Math.min(start.x, p.x), x2: Math.max(start.x, p.x) }, 'select');
+        }
+    };
+    const onUp = event => {
+        if (!pointers.has(event.pointerId)) return;
+        pointers.delete(event.pointerId);
+        if (state === 'pinching') {
+            if (pointers.size === 1) { beginPan([...pointers.values()][0]); return; }   // two fingers to one: it moves on, no jump
+            if (pointers.size === 0) finish();
+            return;
+        }
+        if (pointers.size) return;
+        if (state === 'selecting') {
+            // A span of one bar or more: zoom to it (at least the shortest span)
+            if (shown && shown.to - shown.from >= opts.limits().min) { const { from, to } = shown; shown = uiTimeZoomClamp({ from, to }, opts.limits()); finish(); }
+            else cancel();
+            return;
+        }
+        if (state === 'panning') { finish(); return; }
+        state = 'idle';   // a press without a move: a click picks the bar
+    };
+    // The browser took a finger away: the gesture is called off, a pinch too
+    // when only one of its fingers goes (the other ends it as a plain lift)
+    const onCancel = event => {
+        pointers.delete(event.pointerId);
+        if (!pointers.size || state === 'pinching') cancel();
+    };
+    // A finger lifted lets go of its capture: that is expected and ends nothing.
+    // A bar handing a touch's own capture over to the box bubbles up here too:
+    // only the box losing it while the gesture is on calls the gesture off
+    const onLost = event => {
+        if (event.target === box && pointers.has(event.pointerId) && state !== 'idle') onCancel(event);
+    };
+    const onClick = event => {
+        if (!swallow) return;
+        swallow = false;
+        event.preventDefault();
+        event.stopPropagation();
+    };
+    const onWheel = event => {
+        if (!event.ctrlKey) return;
+        event.preventDefault();
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1;
+        const s = shown || opts.span(), len = s.to - s.from;
+        const anchor = timeAt(event.clientX, s), ratio = (anchor - s.from) / len;
+        const next = len * Math.exp(event.deltaY * unit * 0.004);
+        preview(uiTimeZoomClamp({ from: anchor - ratio * next, to: anchor - ratio * next + next }, opts.limits()), 'wheel');
+        clearTimeout(wheelTimer);
+        wheelTimer = setTimeout(() => { if (shown) { swallow = false; const done = shown; shown = null; opts.change(done); } }, 220);
+    };
+    box.addEventListener('pointerdown', onDown);
+    box.addEventListener('pointermove', onMove);
+    box.addEventListener('pointerup', onUp);
+    box.addEventListener('pointercancel', onCancel);
+    box.addEventListener('lostpointercapture', onLost);
+    box.addEventListener('click', onClick, true);
+    box.addEventListener('wheel', onWheel, { passive: false });
+    return {
+        // A gesture is on: a redraw waits, an answer on its way is set aside
+        busy: () => state !== 'idle' && state !== 'pressing' || !!wheelTimer && !!shown,
+        destroy() {
+            clearTimeout(wheelTimer);
+            box.removeEventListener('pointerdown', onDown);
+            box.removeEventListener('pointermove', onMove);
+            box.removeEventListener('pointerup', onUp);
+            box.removeEventListener('pointercancel', onCancel);
+            box.removeEventListener('lostpointercapture', onLost);
+            box.removeEventListener('click', onClick, true);
+            box.removeEventListener('wheel', onWheel);
+        },
+    };
+}
+
+// Redraw a chart without losing the keyboard's place: focus goes back to the
+// same bar or column (by its start), else the button of the same name in the
+// same group, else the bar that was picked, else the first button of that
+// group. A focus outside the container is left alone.
+function uiRedrawKeepingFocus(container, draw) {
+    const active = document.activeElement;
+    const inside = !!active && active !== container && container.contains(active);
+    const name = el => el.getAttribute('aria-label') || el.textContent.trim();
+    const was = inside ? {
+        thumb: active.dataset ? active.dataset.thumb : undefined,
+        start: active.dataset ? active.dataset.start : undefined,
+        name: name(active),
+        group: active.closest('[role="group"]')?.getAttribute('aria-label') || null,
+        picked: container.querySelector('[data-start][aria-pressed="true"]')?.dataset.start,
+    } : null;
+    draw();
+    if (!was) return;
+    // A button kept in its place but hidden (visibility) takes no focus
+    // (visibility checked by itself: older browsers have checkVisibility without that option)
+    const shown = b => getComputedStyle(b).visibility !== 'hidden' && (typeof b.checkVisibility !== 'function' || b.checkVisibility());
+    const enabled = sel => [...container.querySelectorAll(sel)].filter(b => !b.disabled && shown(b));
+    const inGroup = was.group ? [...container.querySelectorAll('[role="group"]')].find(g => g.getAttribute('aria-label') === was.group) : null;
+    // A bar that is gone (zoomed past, or bars of another length): the one holding its time, else the nearest
+    const nearestBar = t => {
+        const bars = [...container.querySelectorAll('[data-start][data-end]')];
+        return bars.find(b => Number(b.dataset.start) <= t && t < Number(b.dataset.end))
+            || bars.reduce((best, b) => (!best || Math.abs(b.dataset.start - t) < Math.abs(best.dataset.start - t) ? b : best), null);
+    };
+    // A strip's thumb by which edge it holds; a bar by its time (bars have no names of their own); a button by its name
+    const target = was.thumb !== undefined ? container.querySelector(`[data-thumb="${CSS.escape(was.thumb)}"]`)
+        : was.start !== undefined
+        ? container.querySelector(`[data-start="${CSS.escape(was.start)}"]`) || nearestBar(Number(was.start))
+        : enabled(inGroup ? '[role="group"] button' : 'button').find(b => name(b) === was.name && (!inGroup || inGroup.contains(b)))
+            || (was.picked !== undefined && container.querySelector(`[data-start="${CSS.escape(was.picked)}"]`))
+            || (inGroup && enabled('button').find(b => inGroup.contains(b)))
+            || null;
+    if (target) target.focus({ preventScroll: true });
+}
+
+// =============================================================================
+// A small trend beside a figure: its hourly samples over the last days as a
+// line (a gap where an hour has no sample), the latest point marked. Until the
+// samples span a day: nothing (an empty string). The words (aria-label and
+// title) say the trend's start and end and when it was read.
+//   uiSparkline(points, { days, now, format }) -> SVG markup, or ''
+//     points: [{ slot, value, as_of }] oldest first (slot, as_of: ISO); format(value) -> words
+// =============================================================================
+function uiSparkline(points, { days = 7, now = Date.now(), format = v => String(v), label = 'Trend' } = {}) {
+    const W = 72, H = 18, pad = 2;
+    const from = now - days * 86400000;
+    const hourly = (points || []).filter(p => p.value !== null && p.value !== undefined && Date.parse(p.slot) >= from)
+        .sort((a, b) => Date.parse(a.slot) - Date.parse(b.slot));
+    // The words use the samples as read: the first and the latest
+    const firstRead = hourly.length ? Number(hourly[0].value) : null, lastRead = hourly.length ? Number(hourly[hourly.length - 1].value) : null;
+    const when = t => `${formatDay(t)}, ${formatInZone(t, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }, 'en-US')}`;
+    // Nothing until the samples span a day: a dot or a stub says nothing yet (the place stays, the card keeps its size)
+    if (hourly.length < 2 || Date.parse(hourly[hourly.length - 1].slot) - Date.parse(hourly[0].slot) < 86400000) return '';
+    // Runs of samples with no missing hour between them (an hour and a half or more
+    // apart breaks the line); within a run, six hours to a point over a week (their
+    // average, at their mean time): a line, not a comb; the latest reading itself ends it
+    const step = days > 2 ? 6 * 3600000 : 3600000;
+    const pts = [];
+    let group = null;
+    const flush = () => { if (group) pts.push({ t: group.t / group.n, v: group.v / group.n, start: group.start }); group = null; };
+    hourly.forEach((p, i) => {
+        const t = Date.parse(p.slot), v = Number(p.value);
+        const gap = i === 0 || t - Date.parse(hourly[i - 1].slot) > 5400000;
+        const key = Math.floor(t / step);
+        if (gap || !group || group.key !== key) { const start = gap; flush(); group = { key, t: 0, v: 0, n: 0, start }; }
+        group.t += t; group.v += v; group.n += 1;
+    });
+    flush();
+    const last = hourly[hourly.length - 1];
+    pts.push({ t: Date.parse(last.slot), v: Number(last.value), start: false });
+    const values = pts.map(p => p.v);
+    const lo = Math.min(...values), hi = Math.max(...values);
+    const x = t => pad + (Math.max(from, Math.min(now, t)) - from) / (now - from) * (W - 2 * pad);
+    const y = v => (hi === lo ? H / 2 : H - pad - (v - lo) / (hi - lo) * (H - 2 * pad));
+    const d = pts.map(p => `${p.start ? 'M' : 'L'}${x(p.t).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
+    // A run of one point draws no line: a dot shows it (the latest reading has its own mark)
+    const lone = pts.filter((p, i) => p.start && i < pts.length - 1 && pts[i + 1].start)
+        .map(p => `<circle class="is-lone" cx="${x(p.t).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="1.2"/>`).join('');
+    const words = `${label}, last ${days} days: from ${format(firstRead)} to ${format(lastRead)}, as of ${when(Date.parse(last.as_of || last.slot))}`;
+    return `<svg class="ui-spark-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${escapeHtml(words)}"><title>${escapeHtml(words)}</title><path d="${d}"/>${lone}<circle cx="${x(Date.parse(last.slot)).toFixed(1)}" cy="${y(Number(last.value)).toFixed(1)}" r="1.8"/></svg>`;
+}
+
+// =============================================================================
+// Overview strip under a zoomable chart: the whole period in small bars, with a
+// window over the span the chart shows. Drag the window to move it, drag an
+// edge to resize it, click beside it to center it there. Its two edges are
+// sliders for the keyboard ("Start of the span shown", "End of the span
+// shown"): arrows by one step, Page Up / Page Down by a big step, Home / End
+// to the limits. Every change snaps to the chart's own resolution (snap) and
+// keeps at least the shortest span (limits.min); the end of the data is a
+// legal edge even inside a step.
+//   uiTimeOverview(box, { limits, span, snap, step, label, change }) -> { busy, destroy }
+//     limits(): { from, to, min }; span(): { from, to } shown; snap(t): t on an edge
+//     step(t, dir, big): the next edge from t (dir -1 or 1); label(t): the words for t
+//     change(span): after a drag ends, or a moment after the last key
+//     idle(): optional, when a drag or keys end with no new span (or a drag is called off)
+// The caller draws the bars inside box; this adds the window and its edges.
+// =============================================================================
+
+// The span a drag of the window by dt makes: same length, inside the limits, snapped
+function uiOverviewMove(start, dt, limits, snap = t => t) {
+    const len = start.to - start.from;
+    const sn = x => Math.max(limits.from, Math.min(limits.to, snap(x)));
+    let from = Math.max(limits.from, Math.min(start.from + dt, limits.to - len));
+    from = sn(from);
+    const to = from + len >= limits.to - 1 ? limits.to : sn(from + len);
+    return to - from >= limits.min ? { from, to } : { from: Math.max(limits.from, to - len), to };
+}
+
+// The span when one edge moves to t: snapped, kept at least the shortest span from the other edge
+function uiOverviewEdge(span, edge, t, limits, snap = t => t) {
+    const at = x => (x >= limits.to - 1 ? limits.to : x <= limits.from + 1 ? limits.from : Math.max(limits.from, Math.min(limits.to, snap(x))));
+    if (edge === 'start') {
+        const most = span.to - limits.min;
+        let x = Math.max(limits.from, Math.min(t, most));
+        let from = at(x);
+        // Steps that double reach the edge before it on any grid (quarters, hours, days)
+        for (let i = 0, d = from - most + 60000; i < 24 && from > most && x > limits.from; i++, d *= 2) { x -= d; from = at(Math.max(limits.from, x)); }
+        return { from: Math.min(from, Math.max(limits.from, most)), to: span.to };
+    }
+    const least = span.from + limits.min;
+    let x = Math.min(limits.to, Math.max(t, least));
+    let to = at(x);
+    for (let i = 0, d = least - to + 60000; i < 24 && to < least && x < limits.to; i++, d *= 2) { x += d; to = at(Math.min(limits.to, x)); }
+    return { from: span.from, to: Math.max(to, Math.min(limits.to, least)) };
+}
+
+// The span centered at t, same length, inside the limits
+function uiOverviewCenter(span, t, limits, snap = t => t) {
+    const len = span.to - span.from;
+    return uiOverviewMove(span, t - len / 2 - span.from, limits, snap);
+}
+
+// The nearest edge of an hour of the app's zone to t, found as the server finds its
+// hour bars: walking UTC in quarter hours to where the zone's hour (or its offset,
+// on the night the clocks go back) changes. A zone off by half an hour, or whose
+// clocks move by half an hour, has its edges where they really are.
+function uiNearestLocalHour(t) {
+    const Q = 900000;
+    const key = x => {
+        const p = zonedParts(x);
+        const offset = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(x / 1000) * 1000;
+        return `${p.year}-${p.month}-${p.day}-${p.hour}/${offset}`;
+    };
+    const k = key(t);
+    let start = Math.floor(t / Q) * Q;
+    for (let i = 0; i < 12 && key(start - Q) === k; i++) start -= Q;
+    let next = start + Q;
+    for (let i = 0; i < 12 && key(next) === k; i++) next += Q;
+    return t - start <= next - t ? start : next;
+}
+
+function uiTimeOverview(box, opts) {
+    box.querySelectorAll('.ui-ov-win, .ui-ov-thumb').forEach(el => el.remove());
+    const win = document.createElement('div');
+    win.className = 'ui-ov-win';
+    win.setAttribute('aria-hidden', 'true');
+    const thumb = edge => {
+        const el = document.createElement('div');
+        el.className = 'ui-ov-thumb';
+        el.dataset.thumb = edge;
+        el.tabIndex = 0;
+        el.setAttribute('role', 'slider');
+        el.setAttribute('aria-label', edge === 'start' ? 'Start of the span shown' : 'End of the span shown');
+        return el;
+    };
+    const startThumb = thumb('start'), endThumb = thumb('end');
+    box.append(win, startThumb, endThumb);
+    let shown = null;         // the span drawn while a drag or keys are on
+    let drag = null;          // { kind: 'move' | 'start' | 'end' | 'press', x, span, id }
+    let keyTimer = null;
+    const snap = opts.snap || (t => t);
+    const width = () => box.getBoundingClientRect().width || 1;
+    const timeAt = x => {
+        const l = opts.limits(), r = box.getBoundingClientRect();
+        return l.from + Math.max(0, Math.min(1, (x - r.left) / (r.width || 1))) * (l.to - l.from);
+    };
+    const draw = span => {
+        const l = opts.limits();
+        const pos = t => ((t - l.from) / ((l.to - l.from) || 1)) * 100;
+        const a = pos(span.from), b = pos(span.to);
+        win.style.left = `${a}%`;
+        win.style.width = `${Math.max(0, b - a)}%`;
+        startThumb.style.left = `${a}%`;
+        endThumb.style.left = `${b}%`;
+        // Each edge's own bounds depend on the other edge and the shortest span
+        const set = (el, now, min, max) => {
+            el.setAttribute('aria-valuemin', String(Math.round(min)));
+            el.setAttribute('aria-valuemax', String(Math.round(max)));
+            el.setAttribute('aria-valuenow', String(Math.round(now)));
+            el.setAttribute('aria-valuetext', opts.label(now));
+        };
+        set(startThumb, span.from, l.from, Math.max(l.from, span.to - l.min));
+        set(endThumb, span.to, Math.min(l.to, span.from + l.min), l.to);
+    };
+    const current = () => shown || opts.span();
+    const commit = span => {
+        const before = opts.span();
+        shown = null;
+        if (span && (span.from !== before.from || span.to !== before.to)) opts.change(span);
+        else { draw(opts.span()); if (opts.idle) opts.idle(); }
+    };
+    draw(opts.span());
+
+    const onDown = event => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (drag) return;
+        const edge = event.target.closest && event.target.closest('.ui-ov-thumb');
+        const kind = edge ? edge.dataset.thumb : event.target === win ? 'move' : 'press';
+        drag = { kind, x: event.clientX, y: event.clientY, span: current(), id: event.pointerId, moved: false };
+    };
+    const onMove = event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+        if (!drag.moved) {
+            if (Math.hypot(dx, dy) < 6) return;
+            // Mostly up or down: the page scrolls, the strip lets it
+            if (Math.abs(dy) > Math.abs(dx)) { drag = null; return; }
+            drag.moved = true;
+            try { box.setPointerCapture(event.pointerId); } catch (e) { /* the pointer may be gone */ }
+        }
+        const l = opts.limits();
+        if (drag.kind === 'move') shown = uiOverviewMove(drag.span, dx / width() * (l.to - l.from), l, snap);
+        else if (drag.kind === 'start' || drag.kind === 'end') shown = uiOverviewEdge(drag.span, drag.kind, timeAt(event.clientX), l, snap);
+        else return;
+        draw(shown);
+    };
+    const onUp = event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        const d = drag;
+        drag = null;
+        if (d.moved) { commit(shown); return; }
+        // A press without a move beside the window: center the window there
+        if (d.kind === 'press') commit(uiOverviewCenter(d.span, timeAt(event.clientX), opts.limits(), snap));
+    };
+    const onCancel = event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        drag = null;
+        shown = null;
+        draw(opts.span());
+        if (opts.idle) opts.idle();
+    };
+    const onKey = event => {
+        const el = event.target.closest && event.target.closest('.ui-ov-thumb');
+        if (!el) return;
+        const edge = el.dataset.thumb, span = current(), l = opts.limits();
+        const t = edge === 'start' ? span.from : span.to;
+        let next;
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = opts.step(t, -1, false);
+        else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = opts.step(t, 1, false);
+        else if (event.key === 'PageDown') next = opts.step(t, -1, true);
+        else if (event.key === 'PageUp') next = opts.step(t, 1, true);
+        else if (event.key === 'Home') next = l.from;
+        else if (event.key === 'End') next = l.to;
+        else return;
+        event.preventDefault();
+        shown = uiOverviewEdge(span, edge, next, l, snap);
+        draw(shown);
+        // Keys held or pressed in a row ask the server once, a moment after the last
+        clearTimeout(keyTimer);
+        keyTimer = setTimeout(() => { keyTimer = null; commit(shown); }, 350);
+    };
+    box.addEventListener('pointerdown', onDown);
+    box.addEventListener('pointermove', onMove);
+    box.addEventListener('pointerup', onUp);
+    box.addEventListener('pointercancel', onCancel);
+    box.addEventListener('keydown', onKey);
+    return {
+        // A drag or keys are on: a redraw waits, an answer on its way is set aside
+        busy: () => !!(drag && drag.moved) || !!keyTimer,
+        destroy() {
+            clearTimeout(keyTimer);
+            box.removeEventListener('pointerdown', onDown);
+            box.removeEventListener('pointermove', onMove);
+            box.removeEventListener('pointerup', onUp);
+            box.removeEventListener('pointercancel', onCancel);
+            box.removeEventListener('keydown', onKey);
+        },
+    };
 }
 
 // Phones: every dialog opens like the help sheet, at four fifths of the
@@ -1572,8 +2394,25 @@ function uiDialogSheet(backdrop) {
     // A drag on its fixed top part (head, header, tabs) moves the sheet itself: up
     // grows it to the full screen, as scrolling does; down pulls it closed
     let startY = null, startHeight = 0, fixedPart = false, pulled = 0;
+    // A touch that starts on a chart that zooms ([data-zoom]), or a second
+    // finger, is no pull: it neither moves nor closes the sheet, until every
+    // finger is lifted
+    let ignore = false;
     const closeButton = () => dialog.querySelector('.ui-dialog-head [aria-label="Close"], .ui-dialog-head .ui-icon-btn');
+    const cancelPull = () => {
+        startY = null;
+        pulled = 0;
+        dialog.classList.remove('is-held');
+        dialog.style.transition = 'transform .2s ease';
+        dialog.style.transform = '';
+    };
     dialog.addEventListener('touchstart', event => {
+        if (event.touches.length > 1 || (event.target instanceof Element && event.target.closest('[data-zoom]'))) {
+            ignore = true;
+            cancelPull();
+            return;
+        }
+        if (ignore) return;
         startY = null;
         if (!active()) return;
         fixedPart = !event.target.closest('.ui-dialog-body');
@@ -1589,7 +2428,7 @@ function uiDialogSheet(backdrop) {
         dialog.classList.toggle('is-held', fixedPart);
     }, { passive: true });
     dialog.addEventListener('touchmove', event => {
-        if (startY === null) return;
+        if (ignore || startY === null) return;
         const moved = event.touches[0].clientY - startY;
         if (moved < 0 && fixedPart) {
             const height = Math.min(window.innerHeight, startHeight - moved);
@@ -1600,7 +2439,11 @@ function uiDialogSheet(backdrop) {
         pulled = closeButton() ? Math.max(0, moved) : 0;
         dialog.style.transform = pulled ? `translateY(${pulled}px)` : '';
     }, { passive: true });
-    const end = () => {
+    const end = event => {
+        if (ignore) {
+            if (!event || !event.touches || event.touches.length === 0) ignore = false;
+            return;
+        }
         dialog.classList.remove('is-held');
         if (startY === null) return;
         startY = null;
@@ -1619,6 +2462,16 @@ function uiDialogSheet(backdrop) {
     };
     dialog.addEventListener('touchend', end);
     dialog.addEventListener('touchcancel', end);
+}
+
+// A jump to a place further down a phone's sheet (a link to a part of the same
+// dialog) grows the sheet to the full screen first, as scrolling there would:
+// otherwise the sheet takes the jump's scroll to grow and the place stays below
+function uiDialogSheetFull(backdrop) {
+    const dialog = backdrop && backdrop.querySelector(':scope > .ui-dialog');
+    if (!dialog || !uiIsPhone() || backdrop.classList.contains('ui-docked') || backdrop.classList.contains('is-full')) return;
+    backdrop.classList.add('is-grown', 'is-full');
+    dialog.style.height = `${window.innerHeight}px`;
 }
 
 // A dialog is prepared each time it is shown or added to the page (only where
@@ -1674,13 +2527,14 @@ function uiPickerMatches(label, query) {
     return !query || plain(label).includes(plain(query.trim()));
 }
 
-// options: [{ label, hint, value, selected, onclick }] for a list (value: the option's
-// data-value); panel: HTML for a dialog; search: the search field's label, for a long list
-function uiPicker({ id, label, value, set = false, options = null, panel = '', panelLabel = '', panelClass = '', hostClass = '', onOpen = '', search = '', field = false, labelledBy = '', disabled = false }) {
+// options: [{ label, hint, dot, value, selected, onclick }] for a list (value: the option's
+// data-value; dot: a status tone, as the Outcome filter shows it, '' for a grey one);
+// panel: HTML for a dialog; search: the search field's label, for a long list
+function uiPicker({ id, label, value, set = false, options = null, panel = '', panelLabel = '', panelClass = '', hostClass = '', onOpen = '', search = '', field = false, labelledBy = '', disabled = false, icon = false }) {
     const open = uiPickerIsOpen(id);
     const list = Array.isArray(options);
     const query = search ? (uiPickers.query[id] || '') : '';
-    const items = list ? options.map(o => `<button type="button" role="option" class="ui-fct" tabindex="-1" aria-selected="${o.selected ? 'true' : 'false'}"${o.value !== undefined ? ` data-value="${escapeHtml(String(o.value))}"` : ''}${uiPickerMatches(o.label, query) ? '' : ' hidden'} onclick="${o.onclick}"><span>${escapeHtml(o.label)}</span>${o.hint !== undefined ? `<small>${escapeHtml(String(o.hint))}</small>` : ''}</button>`).join('') : '';
+    const items = list ? options.map(o => `<button type="button" role="option" class="ui-fct" tabindex="-1" aria-selected="${o.selected ? 'true' : 'false'}"${o.value !== undefined ? ` data-value="${escapeHtml(String(o.value))}"` : ''}${uiPickerMatches(o.label, query) ? '' : ' hidden'} onclick="${o.onclick}">${o.dot !== undefined ? `<i class="ui-fct-dot${o.dot ? ` ui-fct-${escapeHtml(o.dot)}` : ''}" aria-hidden="true"></i>` : ''}<span>${escapeHtml(o.label)}</span>${o.hint !== undefined ? `<small>${escapeHtml(String(o.hint))}</small>` : ''}</button>`).join('') : '';
     const anyShown = list && options.some(o => uiPickerMatches(o.label, query));
     let role = list ? 'listbox' : 'dialog';
     let body = list ? `<span class="ui-label" aria-hidden="true">${escapeHtml(label)}</span>${items}` : panel;
@@ -1690,7 +2544,9 @@ function uiPicker({ id, label, value, set = false, options = null, panel = '', p
             <span id="${escapeHtml(id)}-list" class="ui-fct-list ui-picker-list" role="listbox" aria-label="${escapeHtml(label)}">${items}</span>
             <span class="ui-picker-none ui-muted${anyShown ? ' hidden' : ''}" role="status">No matches</span>`;
     }
-    const button = field
+    const button = icon
+        ? `<button type="button" class="ui-icon-btn ui-sort-btn-icon ui-picker-btn${set ? ' is-set' : ''}" aria-haspopup="${role}" aria-expanded="${open}" aria-controls="${escapeHtml(id)}-panel" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${UI_SORT_ICON}</button>`
+        : field
         ? `<button type="button" class="ui-select ui-select-btn ui-picker-btn" aria-haspopup="${role}" aria-expanded="${open}" aria-controls="${escapeHtml(id)}-panel"${labelledBy ? ` aria-labelledby="${escapeHtml(labelledBy)}"` : ''}${disabled ? ' disabled' : ''}><span>${value}</span><svg class="ui-select-arrow" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg></button>`
         : `<button type="button" class="ui-msg-range ui-picker-btn${set ? ' is-set' : ''}" aria-haspopup="${role}" aria-expanded="${open}" aria-controls="${escapeHtml(id)}-panel"><span class="ui-picker-name">${escapeHtml(label)}:</span> ${value}</button>`;
     return `<span class="ui-popover-host ui-picker${field ? ' is-field' : ''}${hostClass ? ` ${hostClass}` : ''}" data-picker="${escapeHtml(id)}"${onOpen ? ` data-on-open="${escapeHtml(onOpen)}"` : ''}>
@@ -1721,9 +2577,55 @@ function uiPickerFocusables(panel) {
         .filter(el => !el.disabled && !el.hidden && !el.closest('.hidden'));
 }
 
-// An open panel stays on the screen: it moves back from an edge it would run past
+// An open panel stays on the screen: it moves back from an edge it would run
+// past, opens upward when there is more room above, and scrolls when it is
+// taller than the room it has. The room is the screen under a fixed top bar and
+// above a fixed tab bar (phones), within every box around the panel that cuts
+// what overflows it (the page's scrolling area).
+function uiPickerBounds(panel) {
+    const fixed = el => el && el.getClientRects().length && ['fixed', 'sticky'].includes(getComputedStyle(el).position);
+    const top = document.querySelector('.ui-mtop');
+    const bar = document.querySelector('.ui-tabbar');
+    let lo = fixed(top) ? top.getBoundingClientRect().bottom : 0;
+    let hi = fixed(bar) ? bar.getBoundingClientRect().top : window.innerHeight;
+    for (let box = panel && panel.parentElement; box && box !== document.body; box = box.parentElement) {
+        const style = getComputedStyle(box);
+        if (style.overflowY === 'visible' && style.overflowX === 'visible') continue;
+        const r = box.getBoundingClientRect();
+        if (!r.height) continue;
+        lo = Math.max(lo, r.top);
+        hi = Math.min(hi, r.bottom);
+    }
+    return { top: lo + 8, bottom: hi - 8 };
+}
 function uiPickerPlace(panel) {
     panel.style.transform = '';
+    panel.style.maxHeight = '';
+    panel.style.overflowY = '';
+    panel.classList.remove('is-up');
+    const button = panel.parentElement && panel.parentElement.querySelector('.ui-picker-btn');
+    let bounds = uiPickerBounds(panel);
+    // A button under a bar (reached with the keyboard) comes into view first
+    if (button) {
+        const at = button.getBoundingClientRect();
+        if (at.height && (at.bottom > bounds.bottom || at.top < bounds.top) && button.scrollIntoView) {
+            button.scrollIntoView({ block: 'center', behavior: 'instant' });
+            bounds = uiPickerBounds(panel);
+        }
+    }
+    const down = panel.getBoundingClientRect();
+    if (down.height && down.bottom > bounds.bottom) {
+        // Measured where the panel really hangs from, which is not always its button
+        panel.classList.add('is-up');
+        const up = panel.getBoundingClientRect();
+        if (up.bottom - bounds.top <= bounds.bottom - down.top) panel.classList.remove('is-up');
+    }
+    // Taller than the room on its side: it scrolls within that room
+    const placed = panel.getBoundingClientRect();
+    if (placed.height && (placed.top < bounds.top || placed.bottom > bounds.bottom)) {
+        const room = panel.classList.contains('is-up') ? placed.bottom - bounds.top : bounds.bottom - placed.top;
+        if (room > 0) { panel.style.maxHeight = `${Math.floor(room)}px`; panel.style.overflowY = 'auto'; }
+    }
     const rect = panel.getBoundingClientRect();
     const width = document.documentElement.clientWidth;
     let shift = 0;
@@ -1746,18 +2648,36 @@ function uiPickerOpen(id) {
 }
 
 // The search field, else the chosen option or the first one; in a dialog its first control
+// The panel is already placed on the screen, so the focus does not scroll the
+// page; a choice further down a long list is scrolled into view inside the panel
+function uiPickerReveal(el, panel) {
+    for (let box = el.parentElement; box; box = box.parentElement) {
+        if (box.scrollHeight > box.clientHeight + 1) {
+            const b = box.getBoundingClientRect(), r = el.getBoundingClientRect();
+            if (r.top < b.top) box.scrollTop -= b.top - r.top;
+            else if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom;
+        }
+        if (box === panel) break;
+    }
+}
+// A screen used by touch only (a phone): a field that takes the focus brings up the keyboard
+function uiTouchOnly() {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+}
 function uiPickerFocusInside(panel) {
+    const still = { preventScroll: true };
+    const show = el => { el.focus(still); uiPickerReveal(el, panel); };
     const search = panel.querySelector('.ui-picker-search');
-    if (search) { search.focus(); return; }
-    if (panel.getAttribute('role') === 'listbox') {
+    if (search && !uiTouchOnly()) { show(search); return; }
+    if (search || panel.getAttribute('role') === 'listbox') {
         const items = uiPickerItems(panel);
         const target = items.find(o => o.getAttribute('aria-selected') === 'true') || items[0];
-        if (target) target.focus();
+        if (target) show(target);
         return;
     }
-    const first = uiPickerFocusables(panel)[0];
-    if (first) first.focus();
-    else { panel.setAttribute('tabindex', '-1'); panel.focus(); }
+    const first = panel.querySelector('input[type="radio"]:checked:not(:disabled)') || uiPickerFocusables(panel)[0];
+    if (first) show(first);
+    else { panel.setAttribute('tabindex', '-1'); panel.focus(still); }
 }
 
 // Narrow a long list to the options that hold the typed text
@@ -1780,6 +2700,8 @@ function uiPickerClose(id, { returnFocus = false } = {}) {
     if (panel) {
         panel.classList.add('hidden');
         panel.style.transform = '';
+        panel.style.maxHeight = '';
+        panel.style.overflowY = '';
         // The next opening shows every choice again
         const search = panel.querySelector('.ui-picker-search');
         if (search && search.value) { search.value = ''; uiPickerFilter(panel, ''); }
@@ -1899,7 +2821,9 @@ if (typeof document !== 'undefined' && document.addEventListener) {
         const { host } = uiPickerParts(id);
         if (!host || !host.contains(event.target)) return;
         const next = event.relatedTarget;
-        if (next && !host.contains(next)) uiPickerClose(id);
+        // A click on a label in the panel can hand the focus to the dialog around
+        // it (a layer takes the focus itself): that is not leaving the picker
+        if (next && !host.contains(next) && !next.contains(host)) uiPickerClose(id);
     });
 
     // A panel open while the window changes size stays on the screen
