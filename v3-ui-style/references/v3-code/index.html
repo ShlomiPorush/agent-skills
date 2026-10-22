@@ -25,7 +25,7 @@
     <!-- Utility classes still used by the markup, compiled once
          (.github/scripts/build-utilities-css.sh); the design system comes last -->
     <link rel="stylesheet" href="/static/assets/css/utilities.css?v=2">
-    <link rel="stylesheet" href="/static/assets/css/ui.css?v=68">
+    <link rel="stylesheet" href="/static/assets/css/ui.css?v=74">
     <style>
         .tab-active {
             border-bottom: 2px solid #3b82f6;
@@ -80,10 +80,6 @@
 
         .mobile-scroll {
             -webkit-overflow-scrolling: touch;
-        }
-
-        #recent-activity::-webkit-scrollbar {
-            display: none;
         }
 
         /* Slim, rounded scrollbars matching both themes instead of the
@@ -594,7 +590,6 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                 </svg>
                             </button></h1>
-                        <p class="ui-muted" id="dashboard-subtitle">The last 24 hours, with the last 7 days for comparison</p>
                     </div>
                 </div>
 
@@ -603,18 +598,19 @@
                         <!-- Needs attention: server checks and the security alerts (anomaly detection) -->
                         <section class="ui-panel" id="dashboard-attention-panel">
                             <div class="ui-panel-head">Needs attention <span id="dashboard-attention-count" class="ui-count"></span>
-                                <button type="button" id="dashboard-dismiss-all" onclick="acknowledgeAllSecurityAlerts()" class="hidden ui-btn ui-btn-sm ui-head-actions">Dismiss all alerts</button></div>
-                            <div id="dashboard-attention"></div>
-                            <div id="dashboard-security-alerts" class="hidden"></div>
-                            <p id="dashboard-attention-clear" class="hidden ui-dash-clear">Nothing needs attention right now.</p>
+                                <button type="button" id="dashboard-dismiss-all" onclick="acknowledgeAllSecurityAlerts()" class="is-off ui-btn ui-btn-sm ui-head-actions" aria-label="Dismiss all alerts">Dismiss all<span class="ui-attn-wide">&nbsp;alerts</span></button></div>
+                            <!-- A fixed height; the items scroll inside it -->
+                            <div id="dashboard-attention-scroll" class="ui-attn-scroll" role="region" aria-label="Needs attention" tabindex="0">
+                                <div id="dashboard-attention"></div>
+                                <div id="dashboard-security-alerts" class="hidden"></div>
+                                <p id="dashboard-attention-clear" class="hidden ui-dash-clear">Nothing needs attention right now.</p>
+                            </div>
+                            <p id="dashboard-attention-more" class="ui-attn-more is-off">&nbsp;</p>
                         </section>
 
-                        <section class="ui-panel">
-                            <div class="ui-panel-head"><span id="dashboard-flow-title">Mail flow, last 24 hours</span>
-                                <span class="ui-head-actions ui-flow-actions">
-                                    <button type="button" id="dashboard-flow-view" class="ui-btn ui-btn-sm hidden" onclick="openMailFlowHourMessages()">View these messages</button>
-                                    <button type="button" id="dashboard-flow-reset" class="ui-more hidden" onclick="pickMailFlowHour(null)">All 24 hours</button>
-                                </span></div>
+                        <section class="ui-panel" id="dashboard-flow-panel">
+                            <div class="ui-panel-head"><span id="dashboard-flow-title" aria-live="polite">Mail flow, last 24 hours</span>
+                                <span id="dashboard-flow-period" class="ui-seg" role="group" aria-label="Period"><button type="button" data-period="24h" aria-pressed="true" onclick="setDashFlowPeriod('24h')">24 hours</button><button type="button" data-period="7d" aria-pressed="false" onclick="setDashFlowPeriod('7d')">7 days</button><button type="button" data-period="30d" aria-pressed="false" onclick="setDashFlowPeriod('30d')">30 days</button></span></div>
                             <div class="ui-stats">
                                 <div class="ui-stat" title="Each message counts once, as on the Messages page; a message to three recipients is one message and three deliveries"><span>Messages</span><b id="stat-messages-24h">0</b><small id="stat-messages-note"></small></div>
                                 <div class="ui-stat"><span>Blocked</span><b id="stat-blocked-24h" class="ui-text-fail">0</b><small id="stat-blocked-note"></small></div>
@@ -624,11 +620,6 @@
                             <div id="dashboard-flow-chart" class="ui-flow"></div>
                         </section>
 
-                        <section class="ui-panel">
-                            <div class="ui-panel-head">Latest messages
-                                <button type="button" class="ui-more" onclick="navigateTo('messages')">View all</button></div>
-                            <div id="recent-activity"><div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div></div>
-                        </section>
                     </div>
 
                     <div class="ui-col">
@@ -643,12 +634,12 @@
                             <div class="ui-panel-head">Server health
                                 <button type="button" class="ui-more" onclick="openStatusTab('server')">Status</button></div>
                             <div class="ui-dash-health">
-                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Containers</span><b id="dash-kpi-containers">-</b><small id="dash-kpi-containers-note"></small></button>
-                                <button type="button" class="ui-st-card" id="dashboard-blacklist-card" onclick="openStatusTab('blocklists')"><span class="ui-st-card-label">Blocklists</span><b id="dash-kpi-blocklists">-</b><small id="dash-kpi-blocklists-note"></small></button>
-                                <button type="button" class="ui-st-card" onclick="openStatusTab('jobs')"><span class="ui-st-card-label">Background jobs</span><b id="dash-kpi-jobs">-</b><small id="dash-kpi-jobs-note"></small></button>
-                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Mail storage</span><b id="dash-kpi-storage">-</b><small id="dash-kpi-storage-note"></small></button>
-                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Message linking</span><b id="dash-kpi-linking">-</b><small id="dash-kpi-linking-note"></small></button>
-                                <button type="button" class="ui-st-card" onclick="navigateTo('about')"><span class="ui-st-card-label">This app</span><b id="dash-kpi-version">-</b><small id="dash-kpi-version-note"></small></button>
+                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Containers</span><b id="dash-kpi-containers">-</b><small id="dash-kpi-containers-note"></small><span class="ui-spark is-none" aria-hidden="true"></span></button>
+                                <button type="button" class="ui-st-card" id="dashboard-blacklist-card" onclick="openStatusTab('blocklists')"><span class="ui-st-card-label">Blocklists</span><b id="dash-kpi-blocklists">-</b><small id="dash-kpi-blocklists-note"></small><span class="ui-spark is-none" aria-hidden="true"></span></button>
+                                <button type="button" class="ui-st-card" onclick="openStatusTab('jobs')"><span class="ui-st-card-label">Background jobs</span><b id="dash-kpi-jobs">-</b><small id="dash-kpi-jobs-note"></small><span class="ui-spark is-none" aria-hidden="true"></span></button>
+                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Mail storage</span><b id="dash-kpi-storage">-</b><small id="dash-kpi-storage-note"></small><span class="ui-spark" data-trend="storage_used"></span></button>
+                                <button type="button" class="ui-st-card" onclick="openStatusTab('server')"><span class="ui-st-card-label">Message linking</span><b id="dash-kpi-linking">-</b><small id="dash-kpi-linking-note"></small><span class="ui-spark is-none" aria-hidden="true"></span></button>
+                                <button type="button" class="ui-st-card" onclick="navigateTo('about')"><span class="ui-st-card-label">This app</span><b id="dash-kpi-version">-</b><small id="dash-kpi-version-note"></small><span class="ui-spark is-none" aria-hidden="true"></span></button>
                             </div>
                         </section>
                         <section class="ui-panel">
@@ -705,6 +696,7 @@
                             <label class="ui-search"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z"></path></svg>
                                 <input type="text" id="messages-filter-search" placeholder="Search (sender, recipient, subject, IP, user)..." aria-label="Search" onkeypress="if(event.key==='Enter') applyMessagesFilters()">
                             </label>
+                            <span id="messages-sort" class="ui-msg-sort"></span>
                             <button type="button" id="messages-filters-btn" class="ui-icon-btn ui-msg-filter-btn" aria-expanded="false" aria-controls="messages-more-filters" title="Filter by sender, recipient, user or IP" onclick="toggleMessagesFilters()"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg><span id="messages-filters-n" class="ui-msg-filter-n hidden"></span></button>
                             <div id="messages-more-filters" class="ui-msg-filters hidden">
                                 <input type="text" id="messages-filter-sender" class="ui-input" placeholder="Sender" aria-label="Sender" onkeypress="if(event.key==='Enter') applyMessagesFilters()">
@@ -827,7 +819,7 @@
                         <select id="netfilter-filter-country" class="ui-select" aria-label="Country" data-picker-label="Country" data-picker-search="Search countries" onchange="applyNetfilterFilters()">
                             <option value="" data-short="All">All Countries</option>
                         </select>
-                        <button type="button" class="ui-btn ui-filters-toggle" aria-expanded="false" aria-controls="netfilter-more" onclick="uiToggleFilters(this)">Filters<span class="ui-tab-n hidden"></span></button>
+                        <button type="button" class="ui-icon-btn ui-msg-filter-btn ui-filters-toggle" aria-expanded="false" aria-controls="netfilter-more" aria-label="Filters" title="Filters" onclick="uiToggleFilters(this)"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg><span class="ui-msg-filter-n hidden"></span></button>
                     </div>
                     <div id="netfilter-more" class="ui-fbar-more">
                         <input type="text" id="netfilter-filter-ip" class="ui-input" placeholder="IP Address" aria-label="IP Address" onkeypress="if(event.key==='Enter') applyNetfilterFilters()">
@@ -891,7 +883,7 @@
                                 <input type="text" id="queue-filter-search" placeholder="Search sender/recipient..." aria-label="Search sender or recipient"
                                     onkeypress="if(event.key==='Enter') applyQueueFilters()">
                             </label>
-                            <button type="button" class="ui-btn ui-filters-toggle" aria-expanded="false" aria-controls="queue-more" onclick="uiToggleFilters(this)">Filters<span class="ui-tab-n hidden"></span></button>
+                            <button type="button" class="ui-icon-btn ui-msg-filter-btn ui-filters-toggle" aria-expanded="false" aria-controls="queue-more" aria-label="Filters" title="Filters" onclick="uiToggleFilters(this)"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg><span class="ui-msg-filter-n hidden"></span></button>
                         </div>
                         <div id="queue-more" class="ui-fbar-more">
                             <input type="text" id="queue-filter-queue-id" class="ui-input" placeholder="Queue ID" aria-label="Queue ID"
@@ -982,16 +974,7 @@
                 <section class="ui-sec-block">
                     <div class="ui-list-head"><h2 class="ui-h2">Quarantined Messages</h2></div>
                     <div class="ui-panel ui-table-card">
-                    <section class="ui-panel ui-filters ui-fbar">
-                        <div class="ui-fbar-pickers">
-                            <select id="quarantine-sort" onchange="applyQuarantineSort()" class="ui-select" aria-label="Sort" data-picker-label="Sort" data-no-filter>
-                                <option value="newest" data-short="Newest">Newest first</option>
-                                <option value="score_desc" data-short="Highest score">Score: high to low</option>
-                                <option value="score_asc" data-short="Lowest score">Score: low to high</option>
-                            </select>
-                        </div>
-                    </section>
-                    <p class="ui-list-summary"><span id="quarantine-count" class="ui-count"></span></p>
+                    <p class="ui-list-summary" id="quarantine-list-summary"><span id="quarantine-count" class="ui-count"></span></p>
                     <div id="quarantine-logs"><div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div></div>
                     </div>
                 </section>
@@ -1233,7 +1216,7 @@
                             <label class="ui-search ui-ms-search"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                                 <input type="text" id="mailbox-stats-search" oninput="applyMailboxStatsFilters()" placeholder="Search mailboxes..." aria-label="Search mailboxes">
                             </label>
-                            <button type="button" class="ui-btn ui-filters-toggle" aria-expanded="false" aria-controls="mailbox-stats-more" onclick="uiToggleFilters(this)">Filters<span class="ui-tab-n hidden"></span></button>
+                            <button type="button" class="ui-icon-btn ui-msg-filter-btn ui-filters-toggle" aria-expanded="false" aria-controls="mailbox-stats-more" aria-label="Filters" title="Filters" onclick="uiToggleFilters(this)"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg><span class="ui-msg-filter-n hidden"></span></button>
                         </div>
                         <div class="ui-fbar-pickers">
                             <span class="ui-popover-host ui-picker" id="date-range-picker-container" data-picker="mailbox-stats-period" data-state="mailbox-stats-date-range" data-on-open="mailboxStatsPeriodOpened">
@@ -1261,13 +1244,8 @@
                             <select id="mailbox-stats-domain-filter" onchange="applyMailboxStatsFilters()" class="ui-select" aria-label="Domain" data-picker-label="Domain">
                                 <option value="" data-short="All">All Domains</option>
                             </select>
-                            <select id="mailbox-stats-sort" onchange="applyMailboxStatsFilters()" class="ui-select" aria-label="Sort" data-picker-label="Sort" data-no-filter>
-                                <option value="sent_total-desc" data-short="Sent">Sent (High to Low)</option>
-                                <option value="received_total-desc" data-short="Received">Received (High to Low)</option>
-                                <option value="failure_rate-desc" data-short="Failure rate">Failure Rate (High to Low)</option>
-                                <option value="quota_used-desc" data-short="Quota used">Quota Used (High to Low)</option>
-                                <option value="username-asc" data-short="Username">Username (A-Z)</option>
-                            </select>
+                            <!-- The list's order (field-direction), set by its headers and its Sort button -->
+                            <input type="hidden" id="mailbox-stats-sort" value="sent_total-desc">
                         </div>
                         <div id="mailbox-stats-more" class="ui-fbar-more">
                             <label class="ui-check-label"><input type="checkbox" id="mailbox-stats-active-only" class="ui-check" checked onchange="applyMailboxStatsFilters()"> Active Only</label>
@@ -1433,8 +1411,14 @@
 
                         <!-- Terminal Log Output -->
                         <div id="logs-terminal" class="ui-logs-terminal">
-                            <div id="logs-output" style="font-size: 12px; word-wrap: break-word; white-space: pre-wrap;">
+                            <div id="logs-output" data-line-select=".log-line" style="font-size: 12px; word-wrap: break-word; white-space: pre-wrap;">
                                 <span class="text-gray-500">Connecting to log stream...</span>
+                            </div>
+                            <div id="logs-new-wrap" class="ui-logs-new-wrap" hidden>
+                                <button type="button" class="ui-logs-new" onclick="jumpToNewestLogs()" title="Go to the newest line and turn auto-scroll on">
+                                    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path id="logs-new-arrow" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                    <span id="logs-new-text"></span>
+                                </button>
                             </div>
                         </div>
 
@@ -1502,17 +1486,21 @@
                     </button>
                 </div>
 
-                <div id="message-modal-header" class="ui-md-header"></div>
+                <!-- One scroll for the header, the tabs and the open tab: the tabs stay
+                     pinned, and no number of recipients can push the logs out of reach -->
+                <div id="message-modal-body" class="ui-dialog-body ui-md-body">
+                    <div id="message-modal-header" class="ui-md-header"></div>
 
-                <div class="ui-tabs" role="tablist" aria-label="Message details">
-                    <button type="button" id="modal-tab-overview" class="modal-tab active" role="tab" aria-selected="true" onclick="switchModalTab('overview')"><span>Overview</span></button>
-                    <button type="button" id="modal-tab-postfix" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('postfix')"><span>Logs</span></button>
-                    <button type="button" id="modal-tab-spam" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('spam')"><span>Spam Analysis</span></button>
-                    <button type="button" id="modal-tab-netfilter" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('netfilter')"><span>Security</span></button>
-                </div>
+                    <div class="ui-tabs" role="tablist" aria-label="Message details">
+                        <button type="button" id="modal-tab-overview" class="modal-tab active" role="tab" aria-selected="true" onclick="switchModalTab('overview')"><span>Overview</span></button>
+                        <button type="button" id="modal-tab-postfix" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('postfix')"><span>Logs</span></button>
+                        <button type="button" id="modal-tab-spam" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('spam')"><span>Spam Analysis</span></button>
+                        <button type="button" id="modal-tab-netfilter" class="modal-tab" role="tab" aria-selected="false" onclick="switchModalTab('netfilter')"><span>Security</span></button>
+                    </div>
 
-                <div id="message-modal-content" class="ui-dialog-body">
-                    <div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div>
+                    <div id="message-modal-content" class="ui-md-content">
+                        <div class="ui-loading" role="status"><div class="loading"></div><p>Loading...</p></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1538,7 +1526,7 @@
 
     <!-- Container log dialog: in the body, so no sidebar stacking context can put page content above it -->
     <div id="container-logs-modal" role="dialog" aria-modal="true" aria-labelledby="container-logs-title"
-        onclick="if (event.target === this) closeContainerLogsModal()"
+        onclick="if (uiBackdropClick(event)) closeContainerLogsModal()"
         class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
         <div
             class="bg-gray-900 rounded-lg max-w-5xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-gray-700">
@@ -1572,18 +1560,18 @@
                 </div>
             </div>
             <div class="flex-1 overflow-y-auto p-4 bg-black font-mono text-xs sm:text-sm text-gray-300">
-                <pre id="container-logs-content" class="whitespace-pre-wrap break-all"></pre>
+                <pre id="container-logs-content" class="whitespace-pre-wrap break-all" data-line-select=".ui-log-line"></pre>
             </div>
         </div>
     </div>
 
     <!-- JavaScript -->
-    <script src="/static/utils.js?v=24"></script>
+    <script src="/static/utils.js?v=26"></script>
     <script src="/static/router.js?v=11"></script>
     <script src="/static/app.js?v=79"></script>
     <script src="/static/alert-activity.js?v=5"></script>
     <script src="/static/export.js?v=1"></script>
-    <script src="/static/message-details.js?v=10"></script>
+    <script src="/static/message-details.js?v=20"></script>
     <script src="/static/dmarc.js?v=22"></script>
     <script src="/static/logs-viewer.js?v=6"></script>
     <script src="/static/settings.js?v=50"></script>
@@ -1604,6 +1592,7 @@
         <div class="ui-dialog ui-dialog-fit">
             <div class="ui-dialog-head">
                 <h3>Fetch history</h3>
+                <span id="dmarc-sync-history-sort" class="ui-sort-host"></span>
                 <button onclick="closeDmarcSyncHistoryModal()" class="ui-icon-btn" title="Close" aria-label="Close"><svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div class="ui-dialog-body">
@@ -1614,17 +1603,22 @@
 
     <!-- DMARC Reports Management Modal -->
     <!-- A security alert's history: what was sent or tried before and around it (alert-activity.js) -->
-    <div id="alert-activity-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="alert-activity-title" onclick="if (event.target === this) closeAlertActivity()">
+    <div id="alert-activity-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="alert-activity-title" onclick="if (uiBackdropClick(event)) closeAlertActivity()">
         <div class="ui-dialog ui-dialog-fit ui-aa-dialog">
             <div class="ui-dialog-head">
                 <h3 id="alert-activity-title">Activity</h3>
                 <button onclick="closeAlertActivity()" class="ui-icon-btn" title="Close" aria-label="Close"><svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div id="alert-activity-content" class="ui-dialog-body"></div>
+            <!-- The actions stay at the bottom of the window while its content scrolls -->
+            <div class="ui-dialog-foot" id="alert-activity-foot">
+                <button type="button" id="alert-activity-dismiss" class="hidden ui-btn" title="Dismiss the alert">Dismiss</button>
+                <span id="alert-activity-open" class="ui-aa-open"></span>
+            </div>
         </div>
     </div>
 
-    <div id="mailbox-activity-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="mailbox-activity-title" onclick="if (event.target === this) closeMailboxActivity()">
+    <div id="mailbox-activity-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="mailbox-activity-title" onclick="if (uiBackdropClick(event)) closeMailboxActivity()">
         <div class="ui-dialog ui-dialog-fit ui-aa-dialog">
             <div class="ui-dialog-head">
                 <h3 id="mailbox-activity-title">Activity</h3>
@@ -1659,7 +1653,7 @@
         </div>
     </div>
     <!-- A DMARC or TLS-RPT record: what is in DNS, what it means, what to publish -->
-    <div id="dmarc-record-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="dmarc-record-title" onclick="if (event.target === this) closeDmarcRecordModal()">
+    <div id="dmarc-record-modal" class="hidden ui-dialog-backdrop" role="dialog" aria-labelledby="dmarc-record-title" onclick="if (uiBackdropClick(event)) closeDmarcRecordModal()">
         <div class="ui-dialog ui-dialog-fit ui-dm-dialog">
             <div class="ui-dialog-head">
                 <h3 id="dmarc-record-title">Record</h3>

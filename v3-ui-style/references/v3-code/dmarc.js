@@ -264,8 +264,8 @@ function renderDmarcHome() {
             <div><small>Enforced (quarantine or reject)</small><b class="is-big">${enforced} of ${domains.length}</b></div></div></div>
         <div class="ui-dm-lay"><div>
             <div class="ui-dm-card"><header>Messages per day<small>every domain</small></header><div class="ui-dm-body">${dmarcChart(dmarcState.daily, { h: 150, open: null })}</div></div>
-            <div class="ui-dm-card"><header>Domains <span class="ui-count">${domains.length}</span></header>
-            <table class="ui-dm-tbl ui-dm-cards"><thead><tr><th>Domain</th><th>DMARC policy</th><th class="r">Messages</th><th class="r">Passed DMARC</th><th class="ui-dm-hm">TLS-RPT</th><th class="r ui-dm-hm">Encrypted</th><th class="r ui-dm-hm">Failing senders</th></tr></thead><tbody>
+            <div class="ui-dm-card"><header id="dmarc-domains-head">Domains <span class="ui-count">${domains.length}</span></header>
+            <table class="ui-dm-tbl ui-dm-cards" data-sort-at="dmarc-domains-head" data-sort-name="domains"><thead><tr><th data-sort-kind="text">Domain</th><th data-sort-kind="text">DMARC policy</th><th class="r" data-sort-kind="number">Messages</th><th class="r" data-sort-kind="number">Passed DMARC</th><th class="ui-dm-hm" data-sort-kind="text">TLS-RPT</th><th class="r ui-dm-hm" data-sort-kind="number">Encrypted</th><th class="r ui-dm-hm" data-sort-kind="number">Failing senders</th></tr></thead><tbody>
             ${domains.map(d => {
                 const s = d.stats_30d || {}, tls = d.tls_rpt_record || {};
                 return `<tr class="is-go" onclick="if (!uiRowHeld(event)) loadDomainOverview('${escapeJsArg(d.domain)}')"><td data-sort="${escapeHtml(d.domain)}"><button type="button" class="ui-dm-link">${escapeHtml(d.domain)}</button>${dmarcNotOnServer(d)}</td>
@@ -283,6 +283,78 @@ function renderDmarcHome() {
 // =============================================================================
 
 // Messages (or TLS sessions) per day, passed on failed; a day opens its reports
+// A square per day over the reports kept (DMARC retention): weeks as columns from
+// Monday, colored by the day's DMARC pass rate, stronger with more mail; a day
+// without reports is only a border, a day before the retention is hatched (its
+// reports may be gone). One Tab stop: arrows move by day and week, Enter opens it.
+function dmarcCalendarCard(x) {
+    const cal = x.calendar;
+    if (!cal || !cal.from) return '';
+    const byDate = Object.fromEntries((cal.days || []).map(d => [d.date, d]));
+    const ymd = s => s.split('-').map(Number);
+    const dayNum = s => { const [y, m, d] = ymd(s); return Date.UTC(y, m - 1, d) / 86400000; };
+    const dateOf = n => new Date(n * 86400000).toISOString().slice(0, 10);
+    const first = dayNum(cal.from), last = dayNum(cal.to);
+    // Monday-first weeks: the first column begins on the Monday on or before the first day
+    const lead = (new Date(first * 86400000).getUTCDay() + 6) % 7;
+    const max = Math.max(1, ...(cal.days || []).map(d => d.total));
+    const old = cal.maybe_incomplete_before ? dayNum(cal.maybe_incomplete_before) : -Infinity;
+    const domain = escapeJsArg(x.name);
+    // The day as the app writes dates (formatDay's numbers, in the browser's order), from the date alone
+    const fmt = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+    const dayWords = date => { const [y, m, d] = ymd(date); return fmt.format(new Date(Date.UTC(y, m - 1, d))); };
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push('<span class="ui-dm-cal-pad" aria-hidden="true"></span>');
+    for (let n = first; n <= last; n++) {
+        const date = dateOf(n), d = byDate[date];
+        const pct = d && d.total ? d.pass / d.total * 100 : null;
+        const tone = pct === null ? 'is-empty' : pct >= 98 ? 'is-ok' : pct >= 90 ? 'is-warn' : 'is-fail';
+        const strength = d && d.total ? (0.35 + 0.65 * Math.log(d.total + 1) / Math.log(max + 1)).toFixed(2) : '';
+        const words = d && d.total ? `${dayWords(date)}: ${dmarcNum(d.total)} messages, ${dmarcPct(pct)} passed DMARC` : `${dayWords(date)}: no reports`;
+        const maybe = n < old ? ', reports of this day may have been cleaned up' : '';
+        cells.push(`<button type="button" class="ui-dm-cal-day ${tone}${n < old ? ' is-old' : ''}" data-date="${date}" tabindex="${n === last ? 0 : -1}"${strength ? ` style="--strength:${strength}"` : ''}
+            aria-label="${escapeHtml(words + maybe)}" title="${escapeHtml(words + maybe)}"${d && d.total ? ` onclick="loadReportDetails('${domain}', '${date}')"` : ' aria-disabled="true"'}></button>`);
+    }
+    const span = last - first + 1;
+    // A day is a 24px target at least (its square drawn inside), bigger with few weeks; a year scrolls sideways
+    const weeks = Math.ceil((lead + span) / 7);
+    const size = weeks <= 16 ? 28 : 24;
+    return `<div class="ui-dm-card"><header>Pass rate per day <span class="ui-muted">last ${span} days</span></header>
+        <div class="ui-dm-body"><div class="ui-dm-cal-scroll"><div class="ui-dm-cal-wrap"><div class="ui-dm-cal" style="--cell:${size}px" role="group" aria-label="DMARC pass rate per day, last ${span} days. Arrow keys move by day and week, Enter opens a day" onkeydown="dmarcCalendarKey(event)" onfocusin="dmarcCalendarStop(event)">${cells.join('')}</div>
+            <div class="ui-dm-x ui-dm-cal-x" aria-hidden="true"><span>${escapeHtml(dayWords(cal.from))}</span><span>${escapeHtml(dayWords(cal.to))}</span></div></div></div>
+        <div class="ui-dm-legend ui-dm-cal-legend"><span><i class="is-ok"></i>98% or more</span><span><i class="is-warn"></i>90% to 98%</span><span><i class="is-fail"></i>Under 90%</span><span><i class="is-empty"></i>No reports</span>${old > first ? '<span><i class="is-old"></i>Before the retention</span>' : ''}</div></div></div>`;
+}
+
+// The calendar's one Tab stop is the day last focused, also by a click
+function dmarcCalendarStop(event) {
+    const day = event.target.closest && event.target.closest('.ui-dm-cal-day');
+    if (!day) return;
+    event.currentTarget.querySelectorAll('.ui-dm-cal-day').forEach(d => { d.tabIndex = d === day ? 0 : -1; });
+}
+
+// The calendar's keys: one Tab stop (roving), arrows by day (up and down) and week (left and right);
+// time runs left to right in either text direction, like the charts
+function dmarcCalendarKey(event) {
+    const days = [...event.currentTarget.querySelectorAll('.ui-dm-cal-day')];
+    const at = days.indexOf(document.activeElement);
+    if (at < 0) return;
+    const step = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -7, ArrowRight: 7 }[event.key];
+    let next = null;
+    if (step) next = Math.max(0, Math.min(days.length - 1, at + step));
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = days.length - 1;
+    else if ((event.key === 'Enter' || event.key === ' ') && days[at].getAttribute('aria-disabled') !== 'true') { event.preventDefault(); days[at].click(); return; }
+    if (next === null) return;
+    event.preventDefault();
+    days.forEach(d => { d.tabIndex = d === days[next] ? 0 : -1; });
+    days[next].focus();
+}
+
+// The calendar shows its newest weeks first on a narrow screen
+function dmarcCalendarToEnd() {
+    document.querySelectorAll('.ui-dm-cal-scroll').forEach(box => { box.scrollLeft = box.scrollWidth; });
+}
+
 function dmarcChart(daily, opts = {}) {
     if (!daily.length) return '<p class="ui-dm-empty">No reports in the last 30 days.</p>';
     const h = opts.h || 190;
@@ -435,17 +507,18 @@ function dmarcGroups(sources) {
 async function dmarcLoadDomain(domain) {
     if (dmarcState.domain && dmarcState.domain.name === domain) return dmarcState.domain;
     const enc = encodeURIComponent(domain);
-    const [overview, sources, tls, insight, days] = await Promise.all([
+    const [overview, sources, tls, insight, days, calendar] = await Promise.all([
         dmarcGet(`/api/dmarc/domains/${enc}/overview?days=30`),
         dmarcGet(`/api/dmarc/domains/${enc}/sources?days=30&limit=500`),
         dmarcGet(`/api/dmarc/domains/${enc}/tls-reports/daily?days=30&limit=31`).catch(() => ({ data: [] })),
         dmarcGet(`/api/dmarc/insights?domain=${enc}`).catch(() => null),
-        dmarcGet(`/api/dmarc/domains/${enc}/reports?days=30&limit=31`).catch(() => ({ data: [] }))
+        dmarcGet(`/api/dmarc/domains/${enc}/reports?days=30&limit=31`).catch(() => ({ data: [] })),
+        dmarcGet(`/api/dmarc/domains/${enc}/calendar`).catch(() => null)
     ]);
     const groups = dmarcGroups(sources.data || []);
     const sent = groups.reduce((s, g) => s + g.total, 0);
     dmarcState.domain = {
-        name: domain, overview, groups, tls: tls || { data: [] }, insight, days: (days || {}).data || [],
+        name: domain, overview, groups, tls: tls || { data: [] }, insight, days: (days || {}).data || [], calendar,
         totals: overview.totals || {}, record: overview.dmarc_record || {}, tlsRecord: overview.tls_rpt_record || {},
         spfPct: sent ? groups.reduce((s, g) => s + g.spf, 0) / sent * 100 : 0,
         dkimSeen: groups.some(g => g.dkim > 0)
@@ -548,6 +621,7 @@ async function loadDomainOverview(domain, updateUrl = true) {
         dmarcView().innerHTML = `
             <div class="ui-dm-ttl"><div><small>Last 30 days</small><h2>${escapeHtml(domain)}${dmarcNotOnServer(x.overview)}</h2></div></div>
             <div class="ui-dm-lay"><div>
+                ${dmarcCalendarCard(x)}
                 <div class="ui-dm-card"><header>Messages per day</header><div class="ui-dm-body">${dmarcChart(x.overview.daily_stats || [])}</div></div>
                 ${x.groups.length ? `<div class="ui-dm-card ui-dm-flow-card"><header>Mail flow</header><div class="ui-dm-body">${dmarcFlow(x)}</div></div>` : ''}
                 ${dmarcSendersCard(x)}
@@ -555,6 +629,7 @@ async function loadDomainOverview(domain, updateUrl = true) {
                 ${dmarcTlsCard(x)}
             </div><aside>${dmarcTodoCard(dmarcDomainTasks(x))}${dmarcRecordsCard(x)}</aside></div>`;
         drawDmarcFlow();
+        dmarcCalendarToEnd();
     } catch (error) {
         console.error('Error loading the DMARC domain:', error);
         dmarcFailed(error);
@@ -1049,7 +1124,7 @@ async function showDmarcSyncHistory() {
     modal.classList.remove('hidden');
 
     const closeOnBackdrop = (e) => {
-        if (e.target === modal) {
+        if (uiBackdropClick(e)) {
             closeDmarcSyncHistoryModal();
             modal.removeEventListener('click', closeOnBackdrop);
         }
@@ -1067,8 +1142,8 @@ async function showDmarcSyncHistory() {
 
         const STATUS_TONE = { success: 'ok', error: 'fail', running: 'info' };
         content.innerHTML = `
-            <div class="ui-table ui-stack" style="--ui-cols: minmax(150px, 1.4fr) 80px 90px 70px 70px 80px 70px 80px; --ui-table-min: 760px">
-                <div class="ui-tr ui-tr-head"><span>Date</span><span>Type</span><span>Status</span><span class="ui-td-end">Emails</span><span class="ui-td-end">Created</span><span class="ui-td-end">Duplicate</span><span class="ui-td-end">Failed</span><span>Duration</span></div>
+            <div class="ui-table ui-stack" data-sort-at="dmarc-sync-history-sort" data-sort-name="fetches" style="--ui-cols: minmax(150px, 1.4fr) 80px 90px 70px 70px 80px 70px 80px; --ui-table-min: 760px">
+                <div class="ui-tr ui-tr-head"><span data-sort-kind="date">Date</span><span data-sort-kind="text">Type</span><span data-sort-kind="text">Status</span><span class="ui-td-end" data-sort-kind="number">Emails</span><span class="ui-td-end" data-sort-kind="number">Created</span><span class="ui-td-end" data-sort-kind="number">Duplicate</span><span class="ui-td-end" data-sort-kind="number">Failed</span><span data-sort-kind="number">Duration</span></div>
                 ${data.data.map(sync => `
                 <div class="ui-tr">
                     <span class="ui-td">${formatDate(sync.started_at)}</span>
@@ -1177,8 +1252,8 @@ function renderReportsDomains() {
         <h4 class="ui-md-h">Reports by domain</h4>
         ${allowDelete ? '' : `<div class="ui-list-note ui-flush">${uiLocked('Deleting reports is off', 'Turn on report deletion in Settings, DMARC.',
             `<button type="button" class="ui-btn ui-btn-sm" onclick="closeReportsManagementModal(); navigateTo('settings', { sub: 'dmarc' })">Open Settings</button>`)}</div>`}
-        <div id="dmarc-reports-domains-table" class="ui-table ui-stack" style="--ui-cols: minmax(180px, 2fr) 110px 110px minmax(110px, 1fr)${allowDelete ? ' 100px' : ''}; --ui-table-min: ${allowDelete ? 640 : 540}px">
-            <div class="ui-tr ui-tr-head"><span>Domain</span><span class="ui-td-end">DMARC reports</span><span class="ui-td-end">TLS reports</span><span>Last report</span>${allowDelete ? '<span class="ui-td-end">Actions</span>' : ''}</div>
+        <div id="dmarc-reports-domains-table" class="ui-table ui-stack" data-sort-icon="off" style="--ui-cols: minmax(180px, 2fr) 110px 110px minmax(110px, 1fr)${allowDelete ? ' 100px' : ''}; --ui-table-min: ${allowDelete ? 640 : 540}px">
+            <div class="ui-tr ui-tr-head"><span data-sort-kind="text">Domain</span><span class="ui-td-end" data-sort-kind="number">DMARC reports</span><span class="ui-td-end" data-sort-kind="number">TLS reports</span><span data-sort-kind="date">Last report</span>${allowDelete ? '<span class="ui-td-end">Actions</span>' : ''}</div>
             ${domains.map(d => `
             <div class="ui-tr">
                 <b class="ui-td">${escapeHtml(d.domain)}</b>
@@ -1314,8 +1389,8 @@ function renderReportsManagementTable(reports, allowDelete, { total, page, total
         : '--ui-cols: minmax(150px, 1.2fr) 70px minmax(140px, 1.2fr) minmax(120px, 1fr) 70px minmax(110px, .9fr)';
 
     content.innerHTML = `
-        <div class="ui-table ui-stack" data-sort-handler="sortReportsManagement" style="${cols}; --ui-table-min: 780px">
-            <div class="ui-tr ui-tr-head"><span${reportsSortAttr('created_at')}>Import Date</span><span${reportsSortAttr('type')}>Type</span><span${reportsSortAttr('domain')}>Domain</span><span${reportsSortAttr('reporter')}>Reporter</span><span class="ui-td-end"${reportsSortAttr('records')}>Records</span><span${reportsSortAttr('period')}>Period</span>${allowDelete ? '<span class="ui-td-end">Actions</span>' : ''}</div>
+        <div class="ui-table ui-stack" data-sort-handler="sortReportsManagement" data-sort-icon="off" style="${cols}; --ui-table-min: 780px">
+            <div class="ui-tr ui-tr-head"><span data-sort-kind="date"${reportsSortAttr('created_at')}>Import Date</span><span data-sort-kind="text"${reportsSortAttr('type')}>Type</span><span data-sort-kind="text"${reportsSortAttr('domain')}>Domain</span><span data-sort-kind="text"${reportsSortAttr('reporter')}>Reporter</span><span class="ui-td-end" data-sort-kind="number"${reportsSortAttr('records')}>Records</span><span data-sort-kind="date"${reportsSortAttr('period')}>Period</span>${allowDelete ? '<span class="ui-td-end">Actions</span>' : ''}</div>
             ${reports.map(report => `
             <div class="ui-tr">
                 <span class="ui-td">${dateTime(report.created_at)}</span>

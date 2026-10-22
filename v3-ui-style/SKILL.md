@@ -30,9 +30,10 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
 - Decisions that are part of the style, even where a common default differs:
   - Animations stay when the system asks for reduced motion; add no reduced-motion override (AX-8).
   - The copy icon shows on hover only, on pointer devices; copying works by click or tap without it (FB-12).
-  - A click outside closes only windows without typed input. A window with typed input asks "Discard your changes?" before it drops a change (DS-9).
+  - A click outside closes only windows without typed input, and only when the press started outside. A window with typed input asks "Discard your changes?" before it drops a change (DS-9).
+  - An action the server can take back by a receipt (dismissing alerts) acts at once and offers Undo instead of asking first; DS-20 lists what still asks first and what acts on one click without Undo (FB-16, DS-20).
   - Every hover style is gated by `@media (hover: hover)`; focus styles are not, and a tooltip that is the only way to read a value stays reachable by tap (MO-4).
-- One item is still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order. Build it right from the start.
+- Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
 ## How to read
 

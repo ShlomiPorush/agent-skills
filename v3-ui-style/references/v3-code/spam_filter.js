@@ -557,8 +557,8 @@ async function loadSuppressions(page) {
         }
 
         container.innerHTML = `
-            <div class="ui-table ui-stack ui-supp-table" data-sort-handler="suppressionSortBy">
-                <div class="ui-tr ui-tr-head"><span data-sort-key="email"${suppressionSortAttr('email')}>Address</span><span data-sort-key="reason"${suppressionSortAttr('reason')}>Reason</span><span data-sort-key="bounce_count"${suppressionSortAttr('bounce_count')}>Bounces</span><span data-sort-key="expires_at"${suppressionSortAttr('expires_at')}>Expiry</span><span>Rspamd</span><span data-sort-key="created_at"${suppressionSortAttr('created_at')}>Added</span><span class="ui-td-end">Actions</span></div>
+            <div class="ui-table ui-stack ui-supp-table" data-sort-handler="suppressionSortBy" data-sort-at="suppression-search" data-sort-name="suppressions" data-sort-default="Added:desc">
+                <div class="ui-tr ui-tr-head"><span data-sort-key="email" data-sort-kind="text"${suppressionSortAttr('email')}>Address</span><span data-sort-key="reason" data-sort-kind="text"${suppressionSortAttr('reason')}>Reason</span><span data-sort-key="bounce_count" data-sort-kind="number"${suppressionSortAttr('bounce_count')}>Bounces</span><span data-sort-key="expires_at" data-sort-kind="date"${suppressionSortAttr('expires_at')}>Expiry</span><span>Rspamd</span><span data-sort-key="created_at" data-sort-kind="date"${suppressionSortAttr('created_at')}>Added</span><span class="ui-td-end">Actions</span></div>
                 ${items.map(s => renderSuppressionItem(s)).join('')}
             </div>
             <p id="suppression-more" class="ui-msg-more" aria-live="polite"></p>
@@ -763,7 +763,7 @@ async function showBlockDetails(id, more) {
             '<button type="button" class="ui-btn" onclick="document.getElementById(\'block-details-modal\').remove()">Close</button>');
         modal.querySelector('.ui-dialog').classList.replace('ui-dialog-sm', 'ui-dialog-md');
         // Escape closes the top dialog only (router.js): a message opened from here closes first
-        modal.addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', e => { if (uiBackdropClick(e)) modal.remove(); });
     }
     const body = document.getElementById('block-details-body');
     if (!body) return;
