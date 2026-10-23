@@ -120,7 +120,7 @@ Depth has three levels only: none (page and panels), floating (`0 12px 32px rgb(
 | --- | --- | --- | --- |
 | above 1100px | 240px sidebar: brand, status card, labelled groups, tools at the bottom | Number in an amber or red tag | 22px top, 28px sides |
 | 761 to 1100px | 72px icon rail, no labels, flyout names on hover | 8px dot | 22px |
-| up to 760px | 56px top bar with blur, 64px bottom tab bar, every other page in a "More" bottom sheet | Red pip, "problems" pill in the top bar | 16px top, 12px sides |
+| up to 760px | 56px top bar with blur, 64px bottom tab bar, every other page in a "More" bottom sheet | Red pip; the Needs attention bell in the top bar | 16px top, 12px sides |
 
 - Active nav item: full accent fill plus `aria-current="page"`, not a coloured line.
 - Nav counters appear only when there is something to act on; colour follows severity.
@@ -164,8 +164,8 @@ Build every page from a small component set. Add a new component only when no ex
 - **The status text is the status; colour only reinforces it.** Map every status to a tone in one central table and render it through one helper. Do not add a check mark or cross when the tone already says it.
 - In tight spaces use an icon with an accessible name and a tooltip with the full message.
 - **Thresholds are fixed and documented** (example: pass rate green from 95%, amber from 80%, red below; storage amber above 75%, red above 90%).
-- Thousands separators on every count (`toLocaleString()`).
-- Times in the application's configured time zone, not the browser's, with `Intl.DateTimeFormat`, 24 hour clock. In lists: time only for today, date for earlier days.
+- Thousands separators on every count (`toLocaleString()`); a network's size stays a plain figure, since a separator there changes with the browser's language (FW-3).
+- Times in the application's configured time zone, not the browser's, written by one set of helpers in the date and time formats picked in Settings (24-hour clock by default, numbers instead of month names); a page never formats a date itself, and a test enforces it (FW-9). In lists: time only for today, day and month earlier this year, the whole date before.
 - IDs, addresses and IPs in mono and **click to copy**: faint background and copy icon on hover; copies the full value (not the truncated one); the icon turns into a check for 1.5s; a toast says "Copied: <value>".
 - **Every count is a link** to the list it counts, filtered exactly.
 - **User content keeps its own direction:** `dir="auto"` on the element and the text wrapped in `<bdi>`. Hex colours and other values that start with a neutral character also need an LTR isolate inside RTL text.
@@ -179,7 +179,7 @@ Build every page from a small component set. Add a new component only when no ex
 - State lives in ARIA, not only in classes: `aria-pressed`, `aria-current`, `aria-expanded`. Style by the attribute.
 - Every page, tab, open item and filter is reflected in the URL so it can be bookmarked, shared and reloaded. Old URLs redirect to the matching screen.
 - Persist preferences in `localStorage` (v3 keeps the theme, the collapsed nav and the log viewer's newest-first order). A table's header sort lives in memory: it survives refreshes, not page loads (TB-3).
-- Auto refresh runs only while its page is open, stops when leaving, and never moves an open item.
+- Auto refresh of a page's content runs only while its page is open, stops when leaving, and never moves an open item. Needs attention is the exception: it refreshes on every page, for the header bell (NL-19).
 - Focus: `:focus-visible` with a 2px `--ui-focus` outline and 2px offset. Escape closes the topmost floating layer only, and Back does the same at every width, the phone back gesture included (DS-8, DS-10); a confirm dialog puts the focus on its confirm button, so Enter confirms, but a question that drops work (Discard, Leave) or picks between outcomes puts it on the safe button, so Enter keeps the work; arrow keys move through menus and flyouts.
 - RTL: only logical properties (`margin-inline-start`, `padding-inline-end`, `inset-inline-start`, `border-inline-start`, `text-align: start | end`). Add an explicit `[dir="rtl"]` rule only for things that do not flip by themselves (`translateX` of a switch knob, a directional chevron, a side inset shadow). Test full RTL in the browser; the source project was English only.
 
@@ -199,7 +199,7 @@ Build every page from a small component set. Add a new component only when no ex
 
 The look is half of the style; the other half is how things behave. These rules record the micro-interactions of v3: how sheets open and grow, what Escape and Back close, what survives a refresh, how search moves under the keyboard. Many took several iterations to get right. Replicate them, not only the tokens.
 
-**Every behavior has a full rule in the area files under `references/behaviors/`** (228 rules in 16 areas, with exact values, keyboard and screen reader behavior, the pitfalls from earlier attempts and v3 code references). Before building or changing a dialog, sheet, table, form, search, menu, live view or navigation, read the area's file. This chapter holds what applies everywhere: the principles, the signature behaviors, the interaction rules v3 follows since its fixes and what not to copy.
+**Every behavior has a full rule in the area files under `references/behaviors/`** (230 rules in 16 areas, with exact values, keyboard and screen reader behavior, the pitfalls from earlier attempts and v3 code references). Before building or changing a dialog, sheet, table, form, search, menu, live view or navigation, read the area's file. This chapter holds what applies everywhere: the principles, the signature behaviors, the interaction rules v3 follows since its fixes and what not to copy.
 
 ### Behavior principles
 
@@ -213,9 +213,9 @@ The look is half of the style; the other half is how things behave. These rules 
 8. **One shared component per behavior.** Locked area, save bar, sheet, picker, filter bar and the count helper are each built once and reused; a new page says "like Messages" instead of inventing a variant. (OT-2, FB-1, SV-1, DS-2, MP-1, TB-17, FW-3)
 9. **Remove friction.** Whole rows and whole switch rows are clickable; fields are editable at once without an Edit mode; a pick from a list is added at once and closes its panel; the page reloads only when it must; a secret is asked for only when the user starts replacing it or changes its server; an action the server can take back acts at once and offers Undo instead of asking first. (TB-8, FS-1, SV-1, FS-15, MP-1, SV-4, FS-3, FS-5, DS-20, FB-16)
 10. **Wording.** Say what happened and what to do next; plain verbs for actions ("Fetch reports", "Ban 1w"); correct singular and plural ("1 entry"); names that cover what a setting really does; help titles as words; drop hints that only explain the page; email subjects without emoji; short tooltips. (FW-7, FW-8, FB-3, FB-4, SV-5, SV-12, FW-3, RT-4, EM-5, MO-6)
-11. **Problems first, and open where they are handled.** (TB-11, NL-12, FB-10)
+11. **Problems first, and open where they are handled.** What needs a look is reachable from every page through the header bell. (TB-11, NL-12, FB-10, NL-19)
 12. **Phones get their own layout; wide screens stay unchanged.** Phones fold secondary content behind buttons with a badge, put the main action on the title line, turn tables into lists and leave out what is said elsewhere. (MO-6, MP-6, NL-14, TB-14, MO-7, MO-9)
-13. **Keep the layout still.** Rows stay while reloading, dialogs open at their top, the sheet grows by exactly the scrolled distance, counts get their own line so filters do not push them, action buttons keep one width, notes hang under their button, and a panel keeps one size whatever its content, period, zoom or a failed load. (TB-5, DS-6, DS-1, TB-17, TB-23, NL-15, FB-17)
+13. **Keep the layout still.** Rows stay while reloading, dialogs open at their top, the sheet grows by exactly the scrolled distance, counts get their own line so filters do not push them, action buttons keep one width, notes hang under their button, and a panel keeps one size whatever its content, period, zoom or a failed load; a list panel grows with its items up to a cap instead of leaving empty space. (TB-5, DS-6, DS-1, TB-17, TB-23, NL-15, FB-17)
 14. **Verify the way the user sees it.** Screenshots in light and dark at 1440, 1000 and 390px; pixel comparisons for "unchanged" claims; a recording for anything timing-related; measured panel heights; real Gmail and Outlook sends for email; tests that fail on the old code; and an explicit list of what was not checked. (AX-11, EM-2, EM-3, TB-5, NL-2, FS-1, RT-1)
 
 ### Signature behaviors
@@ -239,11 +239,13 @@ The behaviors that make the style feel like v3. Short form; the full rule with e
 - **Zoom in time, with an overview strip (CH-9, CH-10).** A time chart zooms by a drag across bars, Ctrl+wheel or a pinch, and by buttons; a strip under it shows the whole period with a window to drag, resize or move by keyboard (its edges are sliders); every change snaps to the chart's bars.
 - **Act, then offer Undo (FB-16).** An action the server can take back, such as dismissing alerts, acts at once and offers Undo for `10000`ms in its toast; the server's receipt makes Undo re-open exactly what that action changed.
 - **A calendar of days (CH-12).** One square per day over the data kept, its colour by rate and its strength by volume; one Tab stop with arrows by day and week; time runs left to right in both directions.
+- **Needs attention from every page (NL-19).** A bell in the header counts every open item, red, amber or plain by the worst of them, and opens the same list with the same actions: a window under the bell, a sheet on a phone. A check that cannot run keeps what it showed and says so instead of all clear.
+- **Dates the user's way (FW-9).** Every date and time goes through one set of helpers that follow the Date Format and Time Format settings; a date cell sorts by its instant, not its text.
 - **Click to copy (FB-12).** Every ID, address and IP copies on click, shows "Copied: value" and turns its icon into a check for `1500ms`. Inside a clickable row, copying does not open the row.
 
 ### Interaction rules v3 follows since its interaction fixes
 
-These were gaps in v3 until the interaction fixes (October 2026) and the layers F to J (#474 to #483). v3 meets them now, except where an item says it is still open; build all of them from the start. The full rules are in the area files under the IDs given.
+These were gaps in v3 until the interaction fixes (October 2026), the layers F to J (#474 to #483) and #484 to #494. v3 meets them now, except where an item says it is still open; build all of them from the start. The full rules are in the area files under the IDs given.
 
 - **Animations stay.** Do not turn them off under `prefers-reduced-motion`: the owner wants them even with the system setting on (AX-8).
 - **Hover only with a pointer, everywhere.** Gate every hover style with `@media (hover: hover)`, including utility frameworks, so a tapped button, facet or tab does not stay shaded on touch; keep focus styles ungated and keep a value-only tooltip reachable by tap (MO-4).
@@ -259,7 +261,7 @@ These were gaps in v3 until the interaction fixes (October 2026) and the layers 
 - **Toasts pause while hovered or focused** (FB-2).
 - **One backdrop rule per dialog kind, written down.** Windows without typed input close on a backdrop click, and only when the press started on the backdrop, so a text selection that ends outside keeps the window open; windows with typed input do not close on it (DS-9).
 - **A text selection is never an action.** The end of a selecting gesture (a drag, a double click, Shift+click) in a list row never opens the row (TB-8); a click on a log line selects the whole line with a Copy button, and new lines neither scroll it away nor trim it (LD-2, LD-14). Still open in v3: the Copy button is reached with a mouse only.
-- **Panels keep one size.** A panel draws its frame before the first answer and keeps its height through every period, zoom, picked item and failed load; a list that can grow scrolls inside a fixed height with a count line (FB-17).
+- **Panels keep one size.** A panel draws its frame before the first answer and keeps its height through every period, zoom, picked item and failed load. A list panel is the exception: it is as tall as its items up to a cap, then scrolls inside with a count line, and at its end the page scrolls on (FB-17).
 - **Undo instead of a confirmation where the server can take an action back.** Dismissing alerts acts at once and offers Undo backed by a server receipt; a toast can carry one action and stays while it runs (FB-16, FB-2).
 - **One list at a time.** A list that loads more as it scrolls follows a cursor after the last row shown, drops what an older load still had on its way, and lets a failed next page wait for Try again (TB-6, SV-10).
 
@@ -271,10 +273,10 @@ Problems found in the v3 code at the snapshot `deb075d`. Do not reproduce them. 
 - **A live update that queries a selector the markup no longer renders.** Live service counts updated through `.font-mono` while the list rendered the count in `<small>` (logs-viewer.js:817 vs 123 at deb075d), so the badges never moved. Query by a data attribute the renderer sets. Fixed: the update now reads `small` (logs-viewer.js:829).
 - **Turning auto-scroll back on jumps to the bottom in newest-first order.** Follow must go to the newest line, wherever the order puts it. Fixed by #474: `setLogAutoScroll` goes to the newest edge for the button and for "N new lines" (logs-viewer.js:965-977).
 - **A default stated in three places that disagree** (Hide Zero Activity: the fallback is `false` at mailbox-stats.js:268 and `true` at 458, and Reset at 709-711 checks it under a comment that calls unchecked the default; still in the code). Define each default once.
-- **UTC written into a `datetime-local` input** with `toISOString().slice(0, 16)` (spam_filter.js:722, 771, 782 at deb075d). Format local time, or the app time zone, for local inputs. Fixed: `toZonedInputValue` (spam_filter.js:971, 1018, 1027; utils.js:529).
+- **UTC written into a `datetime-local` input** with `toISOString().slice(0, 16)` (spam_filter.js:722, 771, 782 at deb075d). Format local time, or the app time zone, for local inputs. Fixed: `toZonedInputValue` (spam_filter.js:971, 1018, 1027; utils.js:537).
 - **Overridden rules left in the stylesheet.** v3 keeps an earlier phone rule that makes dialogs full screen, overridden by the sheet rule, and an old content bottom padding superseded by the frame layout. Carry over only the rule that wins.
-- **A delivery key built from the wrong capture (at ab0f644).** The message details mean to resolve Dovecot verdicts per LMTP delivery session, but the prefix regex lost its backslashes and the key takes the user, so two deliveries to one mailbox merge and a store in one cancels a pending discard in the other (message-details.js:598-631). Key each delivery on the session in the line prefix (OT-18).
-- **A padding reset that drops the safe-area inset (at ab0f644).** The message details sheet sets its scroller to `padding: 0`, which beats the sheet rule that adds `env(safe-area-inset-bottom)`, so its last line sits under the phone home bar (ui.css:489, 2983). Keep the inset on whatever element scrolls (DS-11).
+- **A delivery key built from the wrong capture (at ab0f644, fixed by #491).** The message details mean to resolve Dovecot verdicts per LMTP delivery session, but the prefix regex lost its backslashes and the key takes the user, so two deliveries to one mailbox merge and a store in one cancels a pending discard in the other (message-details.js:598-631). Key each delivery on the session in the line prefix (OT-18); v3 does since #491, so do not "fix" it again.
+- **A padding reset that drops the safe-area inset (at 1d4f3e08).** The message details sheet sets its scroller to `padding: 0`, which beats the sheet rule that adds `env(safe-area-inset-bottom)`, so its last line sits under the phone home bar (ui.css:491, 3046). Keep the inset on whatever element scrolls (DS-11).
 - **Breakpoint in the history disagrees with the code.** The docked reading pane docks at `min-width: 1000px` in the code; an older PR says 1200px. Use the code value.
 
 ### Pitfall index
@@ -305,6 +307,9 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - A long header above a dialog's tabs pushes the content out of reach; scroll header, tabs and content as one with the tabs sticky (DS-14).
 - Outlook for Windows: no `max-width`, no padding outside cells, growing VML overlaps, the last row's bottom border is dropped (EM-2).
 - The SMTP 998-character line limit breaks HTML mid-tag; send base64 (EM-3).
+- `toLocaleString()` on a figure follows the browser's language, so a value a test or a user reads as one number changes ("4.096" or "4,096") (FW-3).
+- A date a page formats itself bypasses the user's format and the app's zone; scan for it in a test (FW-9).
+- A regex written inside a string or a template can lose its backslashes; test the key it builds against two inputs that must stay apart (OT-18).
 
 ## Process
 
@@ -325,7 +330,7 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - [ ] Checked at 1280px and up, in the rail range (up to 1100px) and on a phone (up to 760px)
 - [ ] Phone: actions under the text, secondary filters folded, 16px inputs, 44px touch targets
 - [ ] Logical properties only; user values have `dir="auto"`
-- [ ] Numbers use tabular figures and thousands separators; times use the app time zone
+- [ ] Numbers use tabular figures and thousands separators (a network's size excepted, FW-3); dates and times use the app time zone and go through the format helpers
 - [ ] IDs and addresses in mono with click to copy
 - [ ] Page state is in the URL
 - [ ] All assets (fonts, libraries, images) are served locally
@@ -337,7 +342,7 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - [ ] Sortable headers work by click and by keyboard; every list whose header row can hide has one Sort button (documented exceptions aside)
 - [ ] Refreshes keep rows on screen, keep open items open and never redraw what the user is editing
 - [ ] The end of a text-selection gesture never opens a row or closes a dialog (a plain click still opens a row)
-- [ ] Panels keep one size in every state: loading, empty, failed, zoomed
+- [ ] Panels keep one size in every state: loading, empty, failed, zoomed; a list panel grows to a cap, then scrolls
 - [ ] An action the server can take back offers Undo; DS-20 says what asks first and what acts on one click
 - [ ] Animations stay under reduced motion; every hover is gated by `(hover: hover)`, focus styles are not
 - [ ] Leaving unsaved changes asks (in the app, on Back and Forward, and through the browser); typed dialogs ask before dropping changes

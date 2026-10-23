@@ -314,8 +314,8 @@ function securityDescribe(a) {
         };
     }
     if (a.state === 'banned' && a.networkSize) {
-        // IPv6 networks are too large for a count that reads
-        const size = a.ip.includes(':') ? 'Whole network' : `Whole network, ${Number(a.networkSize).toLocaleString()} addresses`;
+        // IPv6 networks are too large for a count that reads; an IPv4 size is a plain figure, without a thousands separator
+        const size = a.ip.includes(':') ? 'Whole network' : `Whole network, ${Number(a.networkSize)} addresses`;
         const range = a.networkRange ? `Every address from ${escapeHtml(a.networkRange[0])} to ${escapeHtml(a.networkRange[1])} is blocked. ` : 'Every address in it is blocked. ';
         return {
             tag: `${uiTag('Banned', 'fail')}<span class="ui-sec-by">by Fail2ban</span>${uiTag(size, 'warn')}`,
@@ -681,7 +681,7 @@ function renderSecurityOverview() {
 // The period as it really is: the logs may start after the chosen one
 function securityPeriodSince() {
     const since = securityPage && securityPage.days === securityDays ? securityPage.since : null;
-    return since ? formatInZone(since, { day: 'numeric', month: 'short' }, 'en-US') : null;
+    return since ? formatDay(since) : null;
 }
 
 // A period as the picker names it

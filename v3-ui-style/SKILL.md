@@ -33,6 +33,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
   - A click outside closes only windows without typed input, and only when the press started outside. A window with typed input asks "Discard your changes?" before it drops a change (DS-9).
   - An action the server can take back by a receipt (dismissing alerts) acts at once and offers Undo instead of asking first; DS-20 lists what still asks first and what acts on one click without Undo (FB-16, DS-20).
   - Every hover style is gated by `@media (hover: hover)`; focus styles are not, and a tooltip that is the only way to read a value stays reachable by tap (MO-4).
+  - Dates and times follow the Date Format and Time Format the user picks (by default the browser's date order and the 24-hour clock), always as numbers without month names, and go through one set of format helpers that a test keeps every page on (FW-9).
 - Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
 ## How to read
