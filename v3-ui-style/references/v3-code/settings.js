@@ -252,6 +252,8 @@ var SETTINGS_FIELD_DESCRIPTIONS = {
     app_title: 'Application title (shown in browser tab).',
     app_logo_url: 'Logo URL (optional; leave empty to use the default project icon).',
     tz: "The app's time zone. Default: UTC.",
+    date_format: "Select your date format. Default: Browser.",
+    time_format: "Select your time format. Default: 24-hour.",
     debug: 'Enable debug mode (shows detailed errors). Use only for development. Never enable in production. Default: false.',
     max_search_results: 'Maximum records to return in search results. Default: 1000.',
     csv_export_limit: 'CSV export row limit. Default: 10000.',
@@ -312,7 +314,7 @@ var SETTINGS_FIELD_DESCRIPTIONS = {
     raw_logs_enabled: 'Collect the services ticked below for the Logs page. When off, the Logs page says collection is off and shows no logs. The services other pages read (listed under Services) are collected either way.',
     raw_logs_fetch_interval: 'Seconds between raw log fetch cycles. Lower = more frequent updates. Default: 30.',
     raw_logs_fetch_count: 'Number of log entries to fetch per service per cycle. Higher values catch more logs but increase API load. Default: 1000.',
-    raw_logs_retention_days: 'Days to keep raw logs in the database. Older logs are automatically deleted at 3:00 AM daily. Default: 2.',
+    raw_logs_retention_days: 'Days to keep raw logs in the database. Older logs are deleted once a day; Status > Jobs shows when. Default: 2.',
     rate_limits_retention_days: 'Days to keep the senders that hit a rate limit, for the Rate Limits page. Never less than Raw Logs Retention Days. Default: 90.',
     eas_devices_retention_days: 'Days to keep a device that stopped syncing before it is removed from the Devices page. 0 keeps every device. Default: 90.',
     raw_logs_services: 'The services the Logs page shows. A service marked Always collected keeps coming in when switched off here, because another page reads it; the Logs page then just does not show it.',
@@ -812,6 +814,19 @@ const SETTINGS_FIELD_OPTIONS = {
         { value: 'ntfy', label: 'ntfy - topic URL' },
         { value: 'gotify', label: 'Gotify - /message?token=...' }
     ],
+    // How dates and times are written (utils.js); the example under them shows the choice
+    date_format: [
+        { value: 'browser', label: 'Browser' },
+        { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY' },
+        { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
+        { value: 'DD.MM.YYYY', label: 'DD.MM.YYYY' },
+        { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD' }
+    ],
+    time_format: [
+        { value: '24h', label: '24-hour (13:05)' },
+        { value: '12h', label: '12-hour (1:05 PM)' },
+        { value: 'browser', label: 'Browser' }
+    ],
     // The Outbound bounce choices (settingsBounceChoice): {count} is the number field
     suppression_hard_bounce_action: [
         { value: 'suppress', label: 'Block new mail to the address and delete its queued mail', needs: 'logs rw-queue sync' },
@@ -825,6 +840,15 @@ const SETTINGS_FIELD_OPTIONS = {
         { value: 'ignore', label: 'Do nothing; keep retrying' }
     ]
 };
+
+// Now, written as the Date Format and Time Format fields say, before they are saved
+function settingsShowFormatExample(root) {
+    const out = root && root.querySelector('#settings-format-example');
+    if (!out) return;
+    const picked = (key, fallback) => { const el = root.querySelector('#edit-' + key); return el && el.value ? el.value : fallback; };
+    const now = zonedParts(new Date());
+    out.textContent = `Example: ${writeDate(now, { fmt: picked('date_format', appDateFmt()) })}, ${writeClock(now, { fmt: picked('time_format', appTimeFmt()) })}`;
+}
 
 // The IANA time zones this browser knows, UTC first; none where the browser
 // cannot list them (the field is then a text box)
@@ -840,6 +864,25 @@ function settingsTimeZoneNames() {
 
 const SETTINGS_TZ_NOT_SET = 'Not set (UTC)';
 
+// How far a zone's clock is from UTC now (daylight saving included), as
+// "UTC+03:00"; '' for a name this browser does not know
+function settingsZoneOffset(name) {
+    try {
+        const part = new Intl.DateTimeFormat('en-US', { timeZone: name || 'UTC', timeZoneName: 'longOffset' })
+            .formatToParts(new Date()).find(p => p.type === 'timeZoneName');
+        if (!part) return '';
+        return part.value === 'GMT' ? 'UTC+00:00' : part.value.replace('GMT', 'UTC');
+    } catch (e) {
+        return '';
+    }
+}
+
+// The picker's button: the zone's name, then its offset
+function settingsZoneButton(name) {
+    const offset = settingsZoneOffset(name);
+    return escapeHtml(name || SETTINGS_TZ_NOT_SET) + (offset ? ` <small class="ui-zone-offset">${offset}</small>` : '');
+}
+
 // The Time Zone picker writes its choice to the hidden field the form saves
 function settingsPickZone(option) {
     const field = document.getElementById('edit-tz');
@@ -854,7 +897,7 @@ function settingsPickZone(option) {
 function settingsShowZone(field) {
     const host = field.parentElement.querySelector('.ui-picker');
     if (!host) return;
-    host.querySelector('.ui-picker-btn > span').textContent = field.value || SETTINGS_TZ_NOT_SET;
+    host.querySelector('.ui-picker-btn > span').innerHTML = settingsZoneButton(field.value);
     host.querySelectorAll('[role="option"]').forEach(o => o.setAttribute('aria-selected', String(o.dataset.value === field.value)));
     const note = field.parentElement.querySelector('[data-zone-note]');
     if (note) note.hidden = field.value !== field.dataset.saved;
@@ -896,7 +939,7 @@ var SETTINGS_EDIT_TABS = [
     {
         id: 'application', label: 'Application', description: 'Web app port, title, logo and time zone. Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL. Debug mode shows detailed errors (do not enable in production). Search/CSV limits and scheduler worker count.', groups: [
             { label: 'Basic', keys: ['app_port', 'app_title', 'app_logo_url'] },
-            { label: 'Time', keys: ['tz'] },
+            { label: 'Time', keys: ['tz', 'date_format', 'time_format'] },
             { label: 'Logging', keys: ['log_level', 'debug'] },
             { label: 'Limits', keys: ['max_search_results', 'csv_export_limit', 'scheduler_workers'] }
         ]
@@ -1283,11 +1326,12 @@ function renderSettingsEditField(key, value, sensitiveKeys, description, envLock
         const unknown = current !== '' && (!settingsTimeZoneKnown(current)
             || (typeof appTimezoneStatus !== 'undefined' && appTimezoneStatus.valid === false && appTimezoneStatus.configured === current));
         const names = current && !zones.includes(current) ? [current, ...zones] : zones;
-        // A long list, so a picker with a search (utils.js, uiPicker); the hidden field holds the value
+        // A long list, so a picker with a search (utils.js, uiPicker); the hidden field holds the value.
+        // Each zone shows its offset from UTC at its end
         const options = [{ value: '', label: SETTINGS_TZ_NOT_SET }, ...names.map(name => ({ value: name, label: name + (name === current && unknown ? ' (unknown)' : '') }))]
-            .map(o => ({ ...o, selected: o.value === current, onclick: 'settingsPickZone(this)' }));
+            .map(o => ({ ...o, hint: settingsZoneOffset(o.value) || undefined, selected: o.value === current, onclick: 'settingsPickZone(this)' }));
         const picker = uiPicker({
-            id: 'settings-' + key, label, value: escapeHtml(current || SETTINGS_TZ_NOT_SET), options, search: 'Search time zones',
+            id: 'settings-' + key, label, value: settingsZoneButton(current), options, search: 'Search time zones',
             field: true, labelledBy: 'label-' + keyAttr, disabled: envLocked
         });
         // The description already says to pick the server's zone; only a name the app cannot use needs a word more
@@ -1313,6 +1357,7 @@ function renderSettingsEditField(key, value, sensitiveKeys, description, envLock
             descHtml +
             '<select id="edit-' + keyAttr + '" name="' + keyAttr + '" ' + disabledAttr + ' class="ui-select' + changed + '">' +
             optionsHtml + '</select>' +
+            (key === 'time_format' ? '<small class="ui-muted" id="settings-format-example" aria-live="polite"></small>' : '') +
             clearBtnHtml +
             envLockedHtml + '</div>';
     }
@@ -1547,6 +1592,8 @@ function renderSettings(content, data) {
         ['Max Correlation Age', `${escapeHtml(String(config.max_correlation_age_minutes || 10))} minutes`],
         ['Correlation Check', `${escapeHtml(String(config.correlation_check_interval || 120))} seconds`],
         ['Timezone', escapeHtml(config.timezone || 'N/A')],
+        ['Date Format', escapeHtml(config.date_format || 'browser')],
+        ['Time Format', escapeHtml(config.time_format || '24h')],
         ['Log Level', escapeHtml(config.log_level || 'INFO')],
         ['Blacklist', config.blacklist_enabled ? `Enabled (${escapeHtml(String(config.blacklist_count))} emails)` : 'Disabled'],
         ['Scheduler Workers', `${escapeHtml(String(config.scheduler_workers || 4))}`],
@@ -1944,6 +1991,8 @@ function renderSettings(content, data) {
             const showChoices = () => content.querySelectorAll('.ui-set-choice').forEach(settingsShowChoice);
             showChoices();
             form.addEventListener('input', showChoices);
+            settingsShowFormatExample(content);
+            form.addEventListener('change', () => settingsShowFormatExample(content));
             settingsShowNeeds(content);
             settingsApplySync(false);
             form.addEventListener('change', event => {
@@ -1951,7 +2000,7 @@ function renderSettings(content, data) {
                 settingsShowNeeds(content);
             });
             // Clearing and resetting change a field without an input event
-            content.querySelectorAll('.settings-clear-btn').forEach(btn => btn.addEventListener('click', () => setTimeout(() => { updateDirty(); settingsShowNeeds(content); })));
+            content.querySelectorAll('.settings-clear-btn').forEach(btn => btn.addEventListener('click', () => setTimeout(() => { updateDirty(); settingsShowNeeds(content); settingsShowFormatExample(content); })));
         }
 
         if (form) {
@@ -2620,7 +2669,7 @@ async function validateCredential(name, toastNow) {
 
 // Settings the rest of the app reads once, when the page loads (from /api/info; the
 // time zone is one of them); saving a change to one reloads the page so it takes effect everywhere
-const SETTINGS_READ_AT_PAGE_LOAD = ['app_title', 'app_logo_url', 'basic_auth_enabled', 'oauth2_enabled', 'mailcow_url', 'tz'];
+const SETTINGS_READ_AT_PAGE_LOAD = ['app_title', 'app_logo_url', 'basic_auth_enabled', 'oauth2_enabled', 'mailcow_url', 'tz', 'date_format', 'time_format'];
 
 // A toast that has to outlive the reload after saving (a credential check)
 const SETTINGS_TOAST_AFTER_RELOAD = 'settingsToastAfterReload';
