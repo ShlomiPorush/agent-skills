@@ -34,6 +34,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
   - An action the server can take back by a receipt (dismissing alerts) acts at once and offers Undo instead of asking first; DS-20 lists what still asks first and what acts on one click without Undo (FB-16, DS-20).
   - Every hover style is gated by `@media (hover: hover)`; focus styles are not, and a tooltip that is the only way to read a value stays reachable by tap (MO-4).
   - There is no Refresh button: every page updates by itself at a pace that fits its data, and a refresh never redraws what the user works in and keeps their place when it does redraw (SV-10, SV-6, SV-13).
+  - Every layer over the page is built by its shared builder (dialog, sheet, picker, menu, toast) or kept in the same frame when it lives in the HTML; exceptions are listed with a reason, and a guard test fails on any other. Where a layer has an X, it is the one shared X (DS-24).
   - Dates and times follow the Date Format and Time Format the user picks (by default the browser's date order and the 24-hour clock), always as numbers without month names, and go through one set of format helpers that a test keeps every page on (FW-9).
 - Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
@@ -42,7 +43,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
 1. Read `references/v3-design-principles.agents.md` fully: core rules, tokens with CSS, type scale, layout, components, copy, behavior principles, signature behaviors, the interaction rules, "Do not copy", the pitfall index and the checklist.
 2. Choose area files from the table below by what the screen contains, not only by its page type. Read each chosen file fully. Do not load all sixteen at once.
 3. When a rule names a rule of another area by ID (for example "AX-7") and your screen uses that part, read that rule too. The prefix gives the file.
-4. Some rules end with a part marked "Before the interaction fixes (history ...)". Where it differs from the first part, the first part is the rule; details the first part does not cover still hold. A sentence that starts "Before the auto-refresh layer" is history in the same way.
+4. Some rules end with a part marked "Before the interaction fixes (history ...)". Where it differs from the first part, the first part is the rule; details the first part does not cover still hold. A sentence that starts "Before the auto-refresh layer" or "Before #509" is history in the same way.
 5. Open the bundled code only when a rule is not enough. `references/v3-code/README.md` says how its `file:line` references resolve and what is not included.
 
 All area files are in `references/behaviors/`.
@@ -75,5 +76,6 @@ Common starting sets, before adding what the screen contains:
 ## Done
 
 - Work through the checklist at the end of the principles file. It is the done gate.
+- Give the project the guard tests v3 uses, adapted to its files: one that fails on a popup built outside the shared builders, and one that fails on a page without a refresh of its own. `references/v3-code/README.md` says how to adapt them.
 - Check the result in the running app: light and dark, desktop, the rail range up to 1100px and a phone up to 760px, and right to left when the project supports it.
 - Report which checklist items you did not verify and which rules of the areas you read you dropped on purpose, with the reason.
