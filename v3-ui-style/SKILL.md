@@ -33,6 +33,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
   - A click outside closes only windows without typed input, and only when the press started outside. A window with typed input asks "Discard your changes?" before it drops a change (DS-9).
   - An action the server can take back by a receipt (dismissing alerts) acts at once and offers Undo instead of asking first; DS-20 lists what still asks first and what acts on one click without Undo (FB-16, DS-20).
   - Every hover style is gated by `@media (hover: hover)`; focus styles are not, and a tooltip that is the only way to read a value stays reachable by tap (MO-4).
+  - There is no Refresh button: every page updates by itself at a pace that fits its data, and a refresh never redraws what the user works in and keeps their place when it does redraw (SV-10, SV-6, SV-13).
   - Dates and times follow the Date Format and Time Format the user picks (by default the browser's date order and the 24-hour clock), always as numbers without month names, and go through one set of format helpers that a test keeps every page on (FW-9).
 - Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
@@ -41,7 +42,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
 1. Read `references/v3-design-principles.agents.md` fully: core rules, tokens with CSS, type scale, layout, components, copy, behavior principles, signature behaviors, the interaction rules, "Do not copy", the pitfall index and the checklist.
 2. Choose area files from the table below by what the screen contains, not only by its page type. Read each chosen file fully. Do not load all sixteen at once.
 3. When a rule names a rule of another area by ID (for example "AX-7") and your screen uses that part, read that rule too. The prefix gives the file.
-4. Some rules end with a part marked "Before the interaction fixes (history ...)". Where it differs from the first part, the first part is the rule; details the first part does not cover still hold.
+4. Some rules end with a part marked "Before the interaction fixes (history ...)". Where it differs from the first part, the first part is the rule; details the first part does not cover still hold. A sentence that starts "Before the auto-refresh layer" is history in the same way.
 5. Open the bundled code only when a rule is not enough. `references/v3-code/README.md` says how its `file:line` references resolve and what is not included.
 
 All area files are in `references/behaviors/`.
@@ -67,9 +68,9 @@ All area files are in `references/behaviors/`.
 
 Common starting sets, before adding what the screen contains:
 
-- Any new page: AX, RT, FB, FW and NL; MO when phones are in scope.
-- Settings page: add FS, SV, DS and MP.
-- Data table page: add TB, SR and MP; LD when it refreshes; DS when a row opens a dialog.
+- Any new page: AX, RT, FB, FW, NL and SV (every page updates by itself, SV-10); MO when phones are in scope.
+- Settings page: add FS, DS and MP.
+- Data table page: add TB, SR and MP; LD for live logs and the "N new messages" offer; DS when a row opens a dialog.
 
 ## Done
 

@@ -1,6 +1,6 @@
 # Bundled v3 code
 
-A read-only copy of the mailcow Logs Viewer frontend at commit `1d4f3e0` of [ShlomiPorush/mailcow-logs-viewer](https://github.com/ShlomiPorush/mailcow-logs-viewer), the code the behavior rules cite. Files keep their names and their place under `frontend/`, so a rule's `utils.js:939-954` is `references/v3-code/utils.js`, lines 939 to 954, and `ui.css:842` is `references/v3-code/assets/css/ui.css`, line 842.
+A read-only copy of the mailcow Logs Viewer frontend at commit `8caf6e4` of [ShlomiPorush/mailcow-logs-viewer](https://github.com/ShlomiPorush/mailcow-logs-viewer), the code the behavior rules cite. Files keep their names and their place under `frontend/`, so a rule's `utils.js:939-954` is `references/v3-code/utils.js`, lines 939 to 954, and `ui.css:842` is `references/v3-code/assets/css/ui.css`, line 842.
 
 Use it as a reference, not as a starter kit:
 
