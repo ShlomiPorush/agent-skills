@@ -17,7 +17,7 @@ File a review-ready pull request without merging or deploying it. Treat the repo
 
 ## Edit the wording
 
-Edit the text you write in this skill with two companion skills: commit messages, any issue you create, and the PR title and body. Apply `technical-writing` to English text, then `unslop` to all of it, including Hebrew sections. When those skills conflict with this skill's format rules, such as the `## Plain language` heading or the issue reference lines, follow this skill. If either skill is unavailable, follow the rules here and say so in the report.
+Edit the text you write in this skill with two companion skills: commit messages, any issue you create, and the PR title and body. Apply `technical-writing` to English text, then `unslop` to all of it, including Hebrew sections. When those skills conflict with this skill's rules on language, the opening paragraph, issue references, or verification reporting, follow this skill. If either skill is unavailable, follow the rules here and say so in the report.
 
 ## Satisfy the workflow
 
@@ -52,8 +52,8 @@ Edit the text you write in this skill with two companion skills: commit messages
 1. Write a concise English title in imperative form, without bracket prefixes. Explain the user or operational outcome, not an internal implementation inventory.
    - Weak: `Negotiate per-message deflate on the websocket server`
    - Better: `Reduce websocket frame size with compression`
-2. In a public repository, begin the body with `## Plain language` and a short English paragraph that explains the problem in ordinary language. In a private repository, begin with `## בשפה פשוטה` and write that paragraph in Hebrew.
-3. Briefly explain the solution after the problem. Keep implementation inventories secondary.
+2. Keep the body short enough for a reviewer to read in under a minute. Open it with a short paragraph, without a heading, that says in plain language what problem the PR solves for the user or the operator, and what changed. A reader who does not know the code must understand it. Write that paragraph in English in a public repository and in Hebrew in a private one.
+3. Add a short list of the main behavior changes only when the opening paragraph does not already cover them. Leave implementation detail to the diff.
 4. Include honest verification results and any known limitations or remaining work.
 5. Reference each matched issue on its own line in the body. Use `Closes #N` when the PR fully resolves the issue and `Refs #N` when it resolves only part of it. For an issue in another repository, use `OWNER/REPO#N`. Omit the line when no issue matched. `Closes` links the issue only when the PR targets the default branch, and GitHub closes the issue when the PR is merged. `Refs` only mentions the issue.
 6. Apply only the lightweight PR labels used by the repository. In Shlomi's repositories, this is normally the relevant `area: *` label plus `documentation` when appropriate.
