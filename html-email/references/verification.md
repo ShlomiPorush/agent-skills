@@ -4,7 +4,7 @@ How the measurements behind the `html-email` skill were made, so the next projec
 
 ## Rules
 
-- **A browser is not a mail client.** A browser page that added `data-ogsb` attributes and fake inline colours "showed" a fix that did nothing on the phone. Use a browser only to check that the HTML renders and the selectors are valid.
+- **A local simulation is not a mail client.** A local page that added `data-ogsb` attributes and fake inline colours "showed" a fix that did nothing on the phone. Use a local copy of the email only to check that the HTML renders and the selectors are valid. A real web mail client opened in a browser is a real client: measure it as below.
 - **Ask first.** Test emails go out through the project's mail settings. Ask the owner, then send only to the addresses the project already notifies, or to addresses the owner gives. Change no code or settings of the running app to do it.
 - **Test the HTML that is actually sent,** after any template engine or CSS inliner, not the template.
 
@@ -29,6 +29,21 @@ How the measurements behind the `html-email` skill were made, so the next projec
    Scan a column to find the swatches, then sample each one. Record the client name, app version and OS version with the values.
 6. **A final send from the real code.** Render the email with the branch's actual layout code, not injected CSS, send it, and get the owner's look before the pull request.
 7. **Tests.** Pin the exact CSS rules and the chart output (heights, zero data, highlight, escaping, axis labels across a clock change, data against a real database, the email still sent when the chart data fails). Show that each new test fails on the old code.
+
+## Outlook on the web: read it directly
+
+A web mail client can be measured without screenshots, which makes several rounds cheap:
+
+1. Open the web client in a browser you can script (an automation tab or a debugging connection), and let the owner sign in there himself. Never type or store his credentials. Open only the test emails; put them in their own folder if you can.
+2. Find the rendered message body (in Outlook on the web, the element labelled "Message body", in the interface language) and read, for the elements that carry the design (outer background, panel, divider, tags, heading, muted text, chart bars):
+   - the `data-ogsb`, `data-ogsc` and `data-ogab` marks, which hold the original colours;
+   - the inline style the client wrote;
+   - `getComputedStyle(el).backgroundColor`, `.color` and `.direction`;
+   - the first ancestor with a background, which is the reading pane;
+   - the text of the `<style>` element inside the body, to see which rules survived and how they were renamed.
+3. Read the calibration email's swatches the same way, row by row, to get the client's colour mapping.
+4. Repeat everything with the browser's colour preference emulated as light and as dark, and **reopen the message after each switch**: the client recolours a message only when it renders it.
+5. Restore the emulation to the system setting when you finish, and report which client version and interface language you measured.
 
 ## Layout screenshots in a browser
 
