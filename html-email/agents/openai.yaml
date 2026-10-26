@@ -1,0 +1,4 @@
+interface:
+  display_name: "HTML Email"
+  short_description: "Make app emails read well in dark mode, checked on real clients"
+  default_prompt: "Use $html-email to fix how this app's emails look in dark mode and verify them on a real client."
