@@ -80,12 +80,50 @@ The partner gets only the task text, with no history from this thread. Make ever
 1. The goal and the user's constraints, in a few lines.
 2. What to review: the plan text, or the exact diff, such as `git diff <base>..HEAD` or a list of files and commits.
 3. Unrelated existing changes in the checkout that are not under review.
-4. For round 2: the round 1 findings, how each was handled, and the objections that are still open.
+4. For every later round: the ledger (see "Findings ledger") and the change since the previous round.
 5. Read-only rules: "Do not edit files, commit, push, or run commands that change state. Report only."
 6. What to return:
-   - Each finding with its location, impact, and the condition under which it fails.
+   - Each finding with an id, a severity (see "Severity"), its location, its impact, and the condition under which it fails.
+   - Code, tests, guards, or options the goal does not need. Unneeded additions are findings too.
    - Risks, better alternatives, and evidence still needed. Do not ask for approval, ask for problems.
    - What the partner checked and what it did not check.
+7. For a sensitive change (see "Severity"): "Look on purpose for defects in rare states: unusual or hostile input, partial failure, retries, concurrency, interrupted runs, old data, and permission edges. For each, describe the failure and a plausible route to it through users, callers, external input, stored data, or supported operations."
+
+## Severity
+
+Every finding has one severity.
+
+| Severity | Meaning |
+|---|---|
+| `blocker` | The case the change exists for is still wrong, or the change breaks something that worked. |
+| `should` | A real defect within the goal that users, callers, or real data will hit. |
+| `nit` | Everything else: style, unrelated code paths, defects with no plausible route, small performance costs, extra compatibility. |
+
+`blocker` and `should` are material.
+
+The main agent checks each label against the code. Lowering a partner's material finding to `nit` is a disagreement, not a correction: the ledger keeps the partner's severity with the proposed `nit` beside it, and the finding stays material and `disputed` until the partner or the user accepts the change.
+
+Sensitive changes are security, auth, migrations, data deletion, irreversible actions, CI or release, public API, and instructions or skills that control permissions, dangerous actions, recovery, or review. In a sensitive change, rarity never lowers severity: within the review scope, a defect with a plausible route is `should` or `blocker`, however rare. When the route is disputed, check it once with available evidence, such as code, a test, or a command. If it stays plausible, the finding stays `disputed` under the dispute rule.
+
+## Findings ledger
+
+Keep one ledger per review (plan or result). Give each finding a stable id, such as `P1` in a plan review and `R1` in a result review. A finding raised again keeps its first id. Record for each id the severity, the round that raised it, a one-line summary with its location and failure condition, the fix or response with its evidence, and one status:
+
+- `open`: not handled yet.
+- `fixed`: changed, waiting for the partner to confirm in the next round.
+- `resolved`: the partner confirmed the fix or accepted the main agent's evidence.
+- `disputed`: the main agent disagrees, with evidence such as file and line, a test, or command output.
+- `declined`: not done, with a one-line reason. Only for a `nit`, or for an out-of-scope suggestion whose classification the partner accepted. Disagreement about whether a material finding belongs to the goal stays `disputed`.
+
+Later rounds focus on `fixed` and `disputed` ids and the change since the previous round. They still report new material defects within the original review scope, including interactions with the change. They do not repeat a `resolved` or `declined` finding without new evidence.
+
+## Keep the change small
+
+- Fix a finding with the smallest change that resolves it. Prefer a fix that deletes or narrows code over one that adds a helper, option, lock, or cache.
+- Decline a suggestion that adds behavior beyond the goal, in one line. Propose it as a follow-up only when it has value beyond this change. The user decides.
+- In a sensitive change, fixing a reachable rare-state defect within the review scope is part of the goal, not scope growth. That includes regressions and interactions the change causes. An unrelated defect that existed before follows the out-of-scope rule above.
+- In a result review, treat `git diff --shortstat <base>` before the first round and after each round of fixes as a signal. When the change grew, remove additions the goal does not need before the next round, and tie the remaining growth to ledger ids. Necessary fixes and tests may grow the change.
+- Do not accept a finding only to end the loop.
 
 ## Delegation mechanics
 
@@ -97,8 +135,11 @@ The partner gets only the task text, with no history from this thread. Make ever
 
 ## Rounds and disagreement
 
-- At most 2 rounds per review (plan or result). Re-review after material fixes.
-- Running out of rounds with open material findings goes to the user. It is never an automatic approval.
+- Round budget per review (plan or result): up to 3 at the Review-only tier, up to 5 at the Full tier.
+- The review ends when every material finding is `resolved`, `declined`, or escalated under the dispute rule below, and no behavior-changing fix waits for review. Otherwise start another round while budget remains. Mentioning an `open` or `fixed` finding to the user is not escalation, and an escalated finding blocks the affected work until the user decides.
+- A fix changes behavior when it changes code paths or data, or, in instructions and skills, what an agent does, may do, or decides. Purely editorial fixes need no new round.
+- A dispute exchange is the main agent's reply with evidence, plus the partner's verdict on it in the next round. A material finding still disputed after two exchanges goes to the user with both positions, two or three lines each. Do not spend more rounds on it alone.
+- When the round budget runs out, stop delegating. Send every material finding that is neither `resolved` nor `declined`, and every behavior-changing fix the partner has not reviewed, to the user for a decision. Running out of budget is never an automatic approval.
 - The main agent decides what to fix. A material disagreement that stays open goes to the user with both positions before the work is called done.
 
 ## Partner failure
@@ -110,4 +151,4 @@ The partner gets only the task text, with no history from this thread. Make ever
 
 ## Report
 
-In the final report, state the tier, the partner instance and model, the gate result, each round's material findings and what was done with them, and any disagreement that is still open.
+In the final report, state the tier, the partner instance and model, the gate result, the number of rounds, the ledger (id, severity, status), the change size before and after review for a result review, and any disagreement that is still open.
