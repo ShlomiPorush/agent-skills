@@ -44,7 +44,7 @@ What to do, when an email shows this:
   ```
 
 - **Never target the marked element itself**, and never join an attribute and a class in one selector (`[data-ogsb].email-bg`): Can I email lists that as unsupported in Outlook.com and the Outlook iOS and Android apps.
-- **Leave status colours alone unless a test shows a problem.** Warning and error tints remapped to a readable brown and red in both clients.
+- **Large status fills can stay; small status tags should be outlined.** A banner's warning or error tint remapped to a readable brown or red in both clients, and the owner kept it. A small tag with a light tinted fill (a pale pink behind "Critical") came out as a muddy grey-brown chip on the web. Of four measured tag styles (tinted fill, outline, neutral fill, solid fill), only an outline stayed clear with both colour preferences: no fill, a 1px border and the text in the tone colour, with the dark theme switching the border together with the text. A neutral fill disappeared inside a panel; a solid fill turned into heavy dark colours.
 - **Test both system preferences on the web.** Outlook on the web gave different results with the computer set to light and to dark, because the dark-mode block applies only in the second case.
 
 ## Direction

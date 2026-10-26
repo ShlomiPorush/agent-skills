@@ -44,6 +44,19 @@ Text: `#111814` showed as `#EAF3EE`, `#5E6863` as `#A6B1AC`, `#C42B1C` as `#FF7A
 
 The neutral palette was then checked on Outlook for Android in dark mode and looked right there too.
 
+### Status tags
+
+Four styles of a 12px tag, each in five tones, on the background and in a panel. Values for the error tone, background colour and text colour as rendered:
+
+| Style | Preference light | Preference dark |
+|---|---|---|
+| Tinted fill `#F8E0DE`, text `#C42B1C` (dark theme `#3D2220` / `#FF6B61`) | fill `#655250`, muddy | fill `#6E4F4C`, muddy |
+| Outline: no fill, 1px border and text `#C42B1C` (dark theme `#FF6B61`) | no fill, border and text `#FF7A5D` | no fill, border and text `#FF6B61` |
+| Neutral fill `#EEEEEE` (dark theme `#2A2A2A`), tone text | fill `#313131`, the same as the panel, so the chip disappears there | fill `#2A2A2A` |
+| Solid fill `#C42B1C`, white text | fill `#AE0E0C` | fill `#AA1922` |
+
+The other tones behaved the same way: the tinted fills came out as muddy mid tones (`#5C5648` warning, `#4C5951` ok, `#4F5762` info), the outlines kept a clear tone colour. The outline was chosen and then checked in Outlook on the web and on Outlook for Android. A warning banner with a tinted fill came out as a readable brown (`#5C5648` light, `#62553E` dark) and was kept.
+
 ## Outlook for Android
 
 ### Setup
