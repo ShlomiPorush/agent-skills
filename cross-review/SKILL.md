@@ -28,6 +28,8 @@ The user's words win over the table: "without partner" means Solo, and "with par
 
 Run the gate before every `delegate_task` call, not once per task. Plan and result reviews can be hours apart.
 
+When presenting a revised plan for approval, present the full revised plan, not the changes since the earlier version.
+
 ## Choose the partner
 
 Call `orchestrator_capabilities` first. It reports `inheritedProviderInstanceId` (the main agent) and every provider instance with its `driverKind`, models, and options. The partner's `driverKind` must differ from the main agent's. The rule is symmetric.
@@ -151,4 +153,14 @@ Later rounds focus on `fixed` and `disputed` ids and the change since the previo
 
 ## Report
 
-In the final report, state the tier, the partner instance and model, the gate result, the number of rounds, the ledger (id, severity, status), the change size before and after review for a result review, and any disagreement that is still open.
+The final message is the only one the user is sure to read. It must stand alone: a user who skipped every earlier message, including the plan, the partner's reviews, and the round updates, must understand the whole outcome from it. Restate each point instead of referring back ("as above", "see round 2").
+
+Write it in plain language, as one person explaining to another: short sentences, no jargon, and a technical term only where no plain word does the job. Explain what a finding means for the user, not only its id.
+
+Order:
+
+1. Outcome: what changed and what it does now, in a few lines.
+2. Verification: what was checked and how, and what was not checked.
+3. Decisions for the user: every escalated or disputed finding with both positions in two or three lines each, and every proposed follow-up.
+4. Leftovers: uncommitted files, skipped checks, manual steps.
+5. Review summary, kept short: tier, partner instance and model, gate result, number of rounds, change size before and after a result review, and the ledger as a table (id, severity, status, one-line summary with the fix or reason).
