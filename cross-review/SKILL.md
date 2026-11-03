@@ -90,6 +90,8 @@ The partner gets only the task text, with no history from this thread. Make ever
    - Risks, better alternatives, and evidence still needed. Do not ask for approval, ask for problems.
    - What the partner checked and what it did not check.
 7. For a sensitive change (see "Severity"): "Look on purpose for defects in rare states: unusual or hostile input, partial failure, retries, concurrency, interrupted runs, old data, and permission edges. For each, describe the failure and a plausible route to it through users, callers, external input, stored data, or supported operations."
+8. Always: "A tracked working value for a secret-like setting, such as a password, key, token, signing or encryption secret, or connection string with credentials, is a `blocker`, whatever its label (fake, dev-only, test, not a secret), its binding (loopback only), or its claimed impact. A file elsewhere that does the same is not a precedent."
+   When the plan or diff sets up or changes a runtime, development, test, or CI environment, or touches secret-like settings, also: "Check that it says how the stack gets each secret. Treat a gap in that, or a breach of any of the following, as a `blocker`: environment files are tracked only as examples; secrets come from a cryptographically secure random generator, in development once into an ignored owner-only file that is never overwritten, and in test and CI for each run; credentials for external services come from a secret store; the stack refuses to start when a secret is missing or equals a placeholder; a value that was ever committed is public and is never reused, even after it moves to an ignored file, and the user is told it must be replaced wherever it is still in use."
 
 ## Severity
 
