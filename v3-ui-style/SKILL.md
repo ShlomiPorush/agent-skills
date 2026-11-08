@@ -36,6 +36,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
   - There is no Refresh button: every page updates by itself at a pace that fits its data, and a refresh never redraws what the user works in and keeps their place when it does redraw (SV-10, SV-6, SV-13).
   - Every layer over the page is built by its shared builder (dialog, sheet, picker, menu, toast) or kept in the same frame when it lives in the HTML; exceptions are listed with a reason, and a guard test fails on any other. Where a layer has an X, it is the one shared X (DS-24).
   - Dates and times follow the Date Format and Time Format the user picks (by default the browser's date order and the 24-hour clock), always as numbers without month names, and go through one set of format helpers that a test keeps every page on (FW-9).
+  - One UI font, Noto Sans Hebrew, draws Hebrew, Latin and digits, so numbers and English words match the Hebrew line. Mono is only for machine values (IPs, hashes, keys, IDs, one-time codes); emails, phone numbers and customer codes use the UI font. A date alone in a list row takes the size of the row's other details. The bundled code is older on this point; the rule wins (RT-3).
 - Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
 ## How to read

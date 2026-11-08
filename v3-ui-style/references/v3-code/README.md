@@ -1,13 +1,13 @@
 # Bundled v3 code
 
-A read-only copy of the mailcow Logs Viewer frontend at commit `72e43c4` of [ShlomiPorush/mailcow-logs-viewer](https://github.com/ShlomiPorush/mailcow-logs-viewer), the code the behavior rules cite. Files keep their names and their place under `frontend/`, so a rule's `utils.js:939-954` is `references/v3-code/utils.js`, lines 939 to 954, and `ui.css:842` is `references/v3-code/assets/css/ui.css`, line 842.
+A read-only copy of the mailcow Logs Viewer frontend at commit `72e43c4` of [ShlomiPorush/mailcow-logs-viewer](https://github.com/ShlomiPorush/mailcow-logs-viewer), the code the behavior rules cite. The one change from that commit is the font rule: `assets/css/ui.css` lines 10 to 15, 20 to 31 and 65 carry the current font rule, with the same line count so every citation still holds, and `assets/fonts/` holds the font files. The page scripts are unchanged and still show some emails in mono; RT-3 wins over them. Files keep their names and their place under `frontend/`, so a rule's `utils.js:939-954` is `references/v3-code/utils.js`, lines 939 to 954, and `ui.css:842` is `references/v3-code/assets/css/ui.css`, line 842.
 
 Use it as a reference, not as a starter kit:
 
 - Start at the cited lines and widen to the whole function and what it calls when you need to. The large files (`app.js`, `ui.css`, `index.html`, `settings.js`) are 135 to 330KB; read them by line range, never whole.
 - The code is v3's product code: mailcow pages, endpoints, field names and wording. Take the behavior and the values, not the domain.
-- Only the files the rules cite are here: the page scripts, `router.js`, `utils.js`, `index.html`, `login.html`, `authorize.html` and `assets/css/ui.css`, plus two guard tests under `tests/`. Not included: the fonts, icons, `assets/css/utilities.css` (a utility class build) and the libraries in `assets/libs/` (Chart.js, marked, DOMPurify, github-markdown-css). `ui.css` and `index.html` load them from `/static/`, so a copy of either does not run as is.
-- Fonts: Onest for text, IBM Plex Mono for IDs and numbers, Noto Sans Hebrew for Hebrew in both. All three are open source fonts (SIL Open Font License). Serve them locally in the target project; `ui.css` lines 18 to 58 show the `@font-face` rules v3 uses.
+- Only the files the rules cite are here: the page scripts, `router.js`, `utils.js`, `index.html`, `login.html`, `authorize.html`, `assets/css/ui.css` and the fonts in `assets/fonts/`, plus two guard tests under `tests/`. Not included: icons, `assets/css/utilities.css` (a utility class build) and the libraries in `assets/libs/` (Chart.js, marked, DOMPurify, github-markdown-css). `ui.css` and `index.html` load them from `/static/`, so a copy of either does not run as is.
+- Fonts: Noto Sans Hebrew for all UI text (Hebrew, Latin and digits), IBM Plex Mono for machine values such as IPs, hashes and IDs (RT-3). Both are open source fonts under the SIL Open Font License; `assets/fonts/` holds the woff2 files and the `OFL-*.txt` licences. Copy the files with their licences and serve them locally in the target project; `ui.css` lines 18 to 59 hold the `@font-face` rules for them.
 
 ## The guard tests
 
