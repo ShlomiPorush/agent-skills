@@ -14,7 +14,7 @@ Before you change anything:
 1. Find every place that builds email HTML: a shared layout, templates, inline builders. A fix must reach all of them.
 2. Find what happens to the HTML after it is built. A CSS inliner or a template engine may drop `<style>` rules, attribute selectors or media queries. Check the final HTML that is sent, not the template.
 3. Note the design: a light design with a dark-mode block, dark by default, or no `<style>` block at all. Keep the project's design. These rules fix how clients render it; they do not choose a new design.
-4. Note which clients the users read mail in, when the owner knows. The measured facts below cover Outlook for Android and Outlook on the web only.
+4. Note which clients the users read mail in, when the owner knows. The colour and link facts below cover Outlook for Android and Outlook on the web only; the long-value facts cover classic Outlook for Windows and Outlook for Android.
 
 ## Outlook in dark mode
 
@@ -63,6 +63,15 @@ Outlook and Gmail turn dates, and sometimes times, phone numbers and addresses, 
 - Do not insert zero-width characters into dates. It worked, but a copy-paste then carries invisible characters.
 - Do not rely on `<meta name="format-detection" content="date=no">` to stop Outlook date links; there was no evidence it helps. Keep format-detection settings the project already has for other reasons.
 
+## Long values without spaces
+
+What was measured in November 2026 in classic Outlook for Windows, in a left-to-right email: a DKIM key of about 420 characters, with no spaces, stayed on one line with `word-break: break-all`, on a `<span>` and on a `<p>` alike, and the email got a horizontal scrollbar. Outlook for Android wrapped the same value. A right-to-left email was not tested.
+
+- **Never shorten the value to fit.** A cut in the middle can hide exactly what the email reports, such as the changed part of a DNS record.
+- **Give Word its own copy.** Put a copy in `<!--[if mso]>...<![endif]-->` in which only the runs longer than the column holds are cut into lines joined with `<br>`, and the unchanged value in `<!--[if !mso]><!-->...<!--<![endif]-->` for every other client. Cut before you escape, so no entity is split. Measured: the key wrapped in lines and the email kept its width.
+- **Leave addresses in a cut run as plain text.** Linking a cut piece would make a `mailto` link to part of an address. Measured: the addresses in a cut run showed in the text colour, not as blue links.
+- A copy made from the Word copy may carry the line breaks; this was not tested. Keep the value whole in the plain-text part.
+
 ## A chart inside an email
 
 - **Bars are table cells,** not an image or SVG. SVG does not display in Gmail or Outlook. A PNG does not follow dark mode, and clients often block images. Cells use the same classes as the rest of the email.
@@ -95,4 +104,4 @@ A change to email colours or links is done only when a real send was seen on the
 
 Tests that pin the exact CSS rules and the chart output must fail on the old code.
 
-When you report, name each client: what was seen on a real device, and what was not tested. As of the measurement, these were not tested: Outlook for iOS, Outlook.com with a personal account, Outlook on the web in its light theme, Outlook for Windows, the Gmail apps, and Apple Mail with the neutral palette or a chart.
+When you report, name each client: what was seen on a real device, and what was not tested. As of the measurement, these were not tested: Outlook for iOS, Outlook.com with a personal account, Outlook on the web in its light theme, Outlook for Windows (except long values), the Gmail apps, and Apple Mail with the neutral palette or a chart.
