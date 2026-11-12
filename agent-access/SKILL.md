@@ -1,6 +1,6 @@
 ---
 name: agent-access
-description: Add agent connection to a web product, so AI agents such as Claude Code, Codex, ChatGPT or other MCP clients can act in it for a person who approves them in the browser. Builds an MCP server with OAuth 2.1, an installable agent skill that connects with a device code and calls the product's REST API, or both, on the product's existing OAuth server or a new one. Use when the user asks to let AI agents connect to their product with a person's approval, to add MCP access or an agent skill with person-approved OAuth, or to bring the n8n-ops or Comply agent-access pattern to another project. Not for adding sign-in (including a device-code sign-in for the product's own CLI), an OAuth client, an MCP server without person-approved access, an agent skill that uses an API key, or using or fixing an existing product's agent skill such as n8n-ops or comply.
+description: Add agent connection to a web product, so AI agents such as Claude Code, Codex, ChatGPT or other MCP clients can act in it for a person who approves them in the browser. Builds an MCP server with OAuth 2.1, an installable agent skill that connects with a device code and calls the product's REST API, or both, on the product's existing OAuth server or a new one. Use when the user asks to let AI agents connect to their product with a person's approval, to add MCP access or an agent skill with person-approved OAuth, to bring the n8n-ops or Comply agent-access pattern to another project, or to bring an existing agent connection (n8n-ops, Comply or another) up to this standard. Not for adding sign-in (including a device-code sign-in for the product's own CLI), an OAuth client, an MCP server without person-approved access, an agent skill that uses an API key, or using an existing product's agent skill such as n8n-ops or comply.
 ---
 
 # Agent access
@@ -14,11 +14,12 @@ Use this skill only when the user asks for one of these in a product they build:
 - AI agents connect to the product and act for a person who approved them;
 - an MCP server whose clients get access through OAuth that a person approves;
 - an agent skill, served by the product, whose command connects with a code a person approves;
-- the n8n-ops or Comply agent-access pattern in another project.
+- the n8n-ops or Comply agent-access pattern in another project;
+- bringing a product that already has agent connection up to this standard (see "An existing implementation").
 
 One channel alone is fine: build the MCP server, the agent skill, or both, as the request needs. When the product already runs an OAuth authorization server, build on it.
 
-These are not this skill: adding sign-in or social login, a device-code sign-in for people using the product's own CLI, building an OAuth client, an MCP server for a local tool, a skill that calls an API with an API key, fixing or using the `n8n-ops` or `comply` skills themselves. If the request is one of those, do not use this skill.
+These are not this skill: adding sign-in or social login, a device-code sign-in for people using the product's own CLI, building an OAuth client, an MCP server for a local tool, a skill that calls an API with an API key, using the `n8n-ops` or `comply` skills to work in those products. If the request is one of those, do not use this skill.
 
 ## What you build
 
@@ -80,6 +81,20 @@ Do the steps in this order. Steps 0 and 1 change nothing in the target.
 9. **Verify.** Work through the checklist in `testing.md`. Connect a real MCP client and the skill on Windows and on one POSIX system. Disconnect and delete every test connection, and check that none is left.
 
 Read `references/lessons.md` before steps 3, 4 and 7. Each lesson there cost a review round or a production fix.
+
+## An existing implementation
+
+When the product already has agent connection, this skill is the standard it must meet. Do not rebuild what already meets it.
+
+1. **Audit.** Read the implementation and check it against every rule above, every requirement S1 to S20 in `server-oauth.md`, the checks in `policy-and-channels.md` and `client-contract.md`, and the done checklist in `testing.md`. Check these on purpose, since each was found in a working product:
+   - the token store holds no usable token, code or device code value (read the stored rows, including the OAuth library's own store);
+   - the consent POST checks `Origin` and requires JSON, beside the `SameSite` cookie;
+   - the client sends its version and the server answers `update_skill`;
+   - the PowerShell client reads its files with `FileShare` `ReadWrite` and `Delete`, and never sends a one-time secret through .NET `HttpClient`;
+   - the client's kind, policy revision and retry rules match `client-contract.md` in all three versions.
+2. **Write the gap table** for Shlomi: the rule, what the product does now (with `file:line`), the change, its risk, and its effect on people (for example every connection ending once when token storage changes, or installed skills told to update). Mark what is a product decision.
+3. **Stop for Shlomi's approval** of the plan. Then fix security gaps first, then the client contract, then the rest. Keep product decisions already made, unless one breaks a rule. Then it is a decision for Shlomi.
+4. **Raise `SKILL_REVISION`** when installed copies of the client must change, and port the contract suite from `templates/test/` to the product's client.
 
 ## Ask Shlomi
 
