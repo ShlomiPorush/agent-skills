@@ -35,7 +35,7 @@ Every answer is one line of JSON on stdout. A call answers `{"status": <http>, "
 | `denied`, `expired` | The person denied, or the code ran out | Start again only if the person wants to. |
 | `bad_path` | A path that is malformed or not in the endpoints list. Nothing was sent. | Take the path from `endpoints`. |
 | `endpoints_unavailable` | The endpoints list could not be read. Nothing was sent. | Try again later. |
-| `policy_changed` | The server's policy changed twice during one call. Nothing ran. | Run `endpoints`, then decide again. |
+| `policy_changed` | The server refused the call twice before running it: its calls changed, or the path names another call than the list says. Nothing ran. | Run `endpoints`, take the path from it, then decide again. |
 | `outcome_unknown` | An `act` call may have run, and its answer was lost or was a server error | Read the state, tell the person. Never send it again blindly. |
 | `bad_body` | The body is not JSON or the file cannot be read | Fix the body. |
 | `unexpected_answer` | The server answered in a shape the command does not accept | Tell the person. |
@@ -87,9 +87,9 @@ Every change to the connection's file and every request that spends a one-time s
 - **Sent or not sent.** A failure before the request left (name resolution, connection refused, TLS) is "not sent". An answer that started and broke off counts as sent.
 - **No automatic resends by the HTTP stack.** The PowerShell version speaks HTTP over a raw socket, one connection per request. .NET `HttpClient` re-sent a dropped request by itself.
 - **No redirects.** A token never follows one to another address.
-- **Paths.** Only characters valid in a path and query, no `://`, no leading `//`, no encoded dots, no `.` or `..` segments, under the product's API prefixes, and the resulting URL must stay on the issuer's origin.
+- **Paths.** Only characters valid in a path and query, no `://`, no leading `//`, no `.` or `..` segments, under the product's API prefixes, and the resulting URL must stay on the issuer's origin. In the path part (before `?`): no `;`, no `%` that does not start a valid escape, and no escape of `/`, `\`, `%` or of any character a template holds as it is (letters, digits and `. _ ~ : -`), since a server that decodes it could route the path elsewhere. Query values keep them.
 - **Kind from the server.** Before a call, find its kind in the stored endpoints list (method and path template). `access` and the listing are reads. When the list is missing or stale, fetch it. When fetching fails or the answer is not a valid list, send nothing: `endpoints_unavailable`. When the fresh list does not hold the path: `bad_path`, nothing sent.
-- **The policy header** carries the stored list's revision on every call except `access` and the listing.
+- **The policy and kind headers** carry the stored list's revision and the kind found for this call, on every call except `access` and the listing. The server refuses a call whose declared kind differs from the route it picked, before that route runs.
 - **Resends, all at most once per call:**
   - 401 with `error="invalid_token"`: refresh and send again;
   - 429 with `{"error": "busy"}`: wait briefly and send again;

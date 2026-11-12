@@ -24,7 +24,7 @@ Tests hold no fixed secret. Every token, code, key and password a test needs is 
 - The exposure test (`policy-and-channels.md`).
 - Every open route refuses a connection without its area, with 403, before route code runs.
 - The reserved markers: a route that gets 401 from an upstream service never answers an agent 401 with `error="invalid_token"`, 429 `busy` or 409 `policy_changed`.
-- The policy revision: a call with an old or missing revision never reaches route code. `access` and the listing work without it.
+- The policy revision and the declared kind: a call with an old or missing revision, or with a declared kind that is missing or differs from the route the router picked (try other letter case, `;` parameters and escapes in the path), never reaches route code. `access` and the listing work without them.
 - Bearer handling: two `Authorization` headers, a malformed one, a bearer next to a session cookie (the cookie is ignored and the session is not touched), an API key next to a bearer.
 - Limits: a body over the cap, an answer over the cap, a call over the deadline (`outcome_unknown`), more concurrent calls than the slots.
 - MCP: `tools/list` shows only granted areas. A tool of another area is refused when called. `Origin` allowed, foreign (403) and missing (passes). An audit entry per call with the right outcome, including `unknown` for a timed-out call.
@@ -72,6 +72,7 @@ When the product changes the command, add the case to the suite first and run it
 - [ ] Every route is classified, and the exposure test is in CI.
 - [ ] Every kind is by effect, and the endpoints listing has a description for every open route.
 - [ ] The three reserved markers are produced only before route code, and a test guards them.
+- [ ] The policy check compares the revision and the declared kind with the route the router picked.
 - [ ] Tokens, codes and device codes are stored only as hashes, or Shlomi decided the gap.
 - [ ] Every way a connection ends is tested, and none revives.
 - [ ] The race matrix passes.

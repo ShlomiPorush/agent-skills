@@ -68,11 +68,19 @@ Three refusals happen before any route code runs. They are the only answers afte
 
 No route answers an agent with any of these. A route that gets 401 from another service, or decides "busy" or "conflict" for its own reasons, answers with another status or another error code. A server test sends each kind of route an upstream 401 and checks the agent never sees a reserved marker.
 
-## The policy revision
+## The policy revision and the declared kind
 
-The endpoints listing carries `revision`: a hash of the open map as the server has it now (method, path template, area and kind of every open route). The client sends it on every API call in a header (`X-Myapp-Policy`, named for the product). The policy check compares it before any route code runs. A missing or different revision gets 409 `policy_changed`. The `access` route and the endpoints listing are exempt, since the client needs them to learn the revision. The MCP channel does not use the header, because the MCP server holds the table itself.
+The endpoints listing carries `revision`: a hash of the open map as the server has it now (method, path template, area and kind of every open route). On every API call the client sends two headers, named for the product:
 
-Without the revision, a client whose cached list still says `read` for a route the server now calls `act` would retry it after a lost answer, and the action would run twice.
+- `X-Myapp-Policy`: the revision of the list it used;
+- `X-Myapp-Kind`: `read` or `act`, the kind it found for this call in that list.
+
+The policy check, before any route code runs, refuses with 409 `policy_changed` when the revision is missing or different, or when the declared kind is missing, unknown, or differs from the kind of the route the router picked. The `access` route and the endpoints listing are exempt, since the client needs them to learn the revision. The MCP channel does not use the headers, because the MCP server holds the table itself.
+
+Both protect the one rule that matters most: an action is never sent twice.
+
+- Without the revision, a client whose cached list still says `read` for a route the server now calls `act` would retry it after a lost answer, and the action would run twice.
+- Without the declared kind, the client and the router could disagree on which route a path names, and the client would again retry an action it thinks is a read. Routers decode escapes, ignore letter case (the default in some frameworks), or strip `;` path parameters, and the client cannot follow each router's rules. The server knows which route it picked, so the server decides.
 
 ## The REST channel
 

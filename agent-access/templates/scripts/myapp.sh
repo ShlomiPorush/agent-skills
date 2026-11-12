@@ -33,6 +33,8 @@ TOKEN_PATH="/oauth/token"
 REVOKE_PATH="/oauth/revoke"
 SKILL_HEADER_NAME="x-myapp-skill"
 POLICY_HEADER_NAME="x-myapp-policy"
+# The header that carries the kind (read or act) the client found for a call, with the policy revision.
+KIND_HEADER_NAME="x-myapp-kind"
 KINDS_MAGIC="myapp-kinds"
 # Filled in with the address when the server serves this file.
 DEFAULT_URL="__MYAPP_URL__"
@@ -68,12 +70,15 @@ KINDS_FORMAT=2
 UNKNOWN_OUTCOME="The action may have run. Read its state before trying again."
 NOT_LISTED="This connection has no such call. Take the path from \`$CMD endpoints\`, with its {...} parts filled in; never guess it."
 UNAVAILABLE="The list of allowed calls could not be read from $PRODUCT, so nothing was sent. Try again in a moment."
-POLICY_CHANGED="$PRODUCT's list of allowed calls changed twice while this call was sent. Nothing ran; run it again."
+POLICY_CHANGED="$PRODUCT's calls changed, or this path names a different call than the list says. Nothing ran. Run \`$CMD endpoints\` and take the path from it."
 FIELDS="v:n issuer:s label:s generation:s refreshToken:s accessToken:s accessExpiresAt:n scope:s refreshStartedAt:n refreshRetried:n deviceCode:s userCode:s link:s deviceExpiresAt:n interval:n nextPollAt:n toRevoke:s"
 
 LOCKTOKEN=""
 TMPD=""
 SECURED=0
+CHECKED=0
+# The last answer (http): its file, and 1 when it is complete JSON.
+RESP="" RESP_JSON=0
 FAIL_STATUS=""
 # The call being sent (api_send): its kind, the revision of the list it was classified with (empty: exempt), its
 # path, and whether each retry was used. SOFT=1 makes a failed request return instead of stopping (the listing).
@@ -102,7 +107,7 @@ fail() {
   body=""
   st=""
   [ -n "$FAIL_STATUS" ] && st=",\"status\":$FAIL_STATUS"
-  if [ $# -ge 3 ] && [ -s "$3" ]; then
+  if [ $# -ge 3 ] && [ -s "$3" ] && [ "$(json_scan valid "$3")" = 1 ]; then
     first=$(tr -d ' \t\r\n' <"$3" | cut -c1)
     case "$first" in "{" | "[") body=",\"body\":$(tr -d '\r\n' <"$3")" ;; esac
   fi
@@ -110,10 +115,17 @@ fail() {
   exit 1
 }
 
-# Reading flat JSON: one string or number field; values with escapes do not match and read as empty.
-jstr() { tr -d '\r\n' <"$2" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p'; }
+# Reading flat JSON: one string or number field; values with escapes do not match and read as empty. An answer is
+# read only when it is complete JSON (RESP_JSON, from json_scan).
+jstr() {
+  [ "$2" != "$RESP" ] || [ "$RESP_JSON" = 1 ] || return 0
+  tr -d '\r\n' <"$2" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p'
+}
 jnum() {
-  v=$(tr -d '\r\n' <"$2" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+  v=""
+  if [ "$2" != "$RESP" ] || [ "$RESP_JSON" = 1 ]; then
+    v=$(tr -d '\r\n' <"$2" | sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+  fi
   printf '%s' "${v:-0}"
 }
 secret_ok() { case "$1" in "" | *[!A-Za-z0-9._~+/=-]*) return 1 ;; esac }
@@ -124,70 +136,143 @@ revision_ok() {
   [ ${#1} -le 128 ]
 }
 
-# json_scan MODE FILE [KEY]: a small JSON reader. "failed" prints 1 when the top object says "success": false or
-# "status": "error", else 0. "top" prints the top object's string field KEY (never one nested deeper). "kinds"
+# json_scan MODE FILE [KEY]: a small, strict JSON reader. It reads a file only when the whole file is one complete
+# JSON value with nothing after it but whitespace, as JSON.parse reads it (RFC 8259: no single quotes, names
+# without quotes, comments, trailing commas, leading zeros or raw control characters in a string); otherwise it
+# reads nothing, so a broken answer holds no refusal marker and no list. A key given twice counts as JSON.parse
+# reads it: the last value wins, and a later value that is not a string clears an earlier string. Compared values
+# have their escapes read (\u0062usy is busy).
+# "valid" prints 1 when the file is such JSON, else 0. "failed" prints 1 when the top object says "success": false
+# or "status": "error", else 0. "top" prints the top object's string field KEY (never one nested deeper). "kinds"
 # prints "METHOD PATH KIND" for each object of the top object's "endpoints" list, "L" when that list is an array,
 # and "R REVISION" when the top object's "revision" is a string.
 json_scan() {
-  tr -d '\000-\010\013\014\016-\037' <"$2" | awk -v mode="$1" -v key="${3:-}" '
-function value(k, kind, v) {
-  if (mode == "top") {
-    if (depth == 1 && typ[1] == "{" && k == key && kind == "s") top = v
-  } else if (mode == "failed") {
-    if (depth == 1 && typ[1] == "{" && ((k == "success" && kind == "l" && v == "false") || (k == "status" && kind == "s" && v == "error"))) found = 1
-  } else if (depth == 1 && typ[1] == "{" && k == "revision") {
-    seenrev = (kind == "s"); rev = v
-  } else if (depth == 3 && typ[1] == "{" && typ[2] == "[" && typ[3] == "{" && ckey[2] == "endpoints" && kind == "s") {
-    if (k == "method") em = v
-    else if (k == "path") ep = v
-    else if (k == "kind") ek = v
+  # NUL becomes another control character, which no JSON holds as it is, so that every awk reads the whole file.
+  tr '\000' '\001' <"$2" | LC_ALL=C awk -v mode="$1" -v key="${3:-}" '
+function hexv(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+# A string as JSON.parse reads it, for comparing: an escape of printable ASCII becomes its character; any other
+# stays \u and four hex digits, which no value compared here holds.
+function unesc(s,   out, i, c, n, v) {
+  out = ""; n = length(s)
+  for (i = 1; i <= n; i++) {
+    c = substr(s, i, 1)
+    if (c != "\\") { out = out c; continue }
+    i++; c = substr(s, i, 1); v = -1
+    if (c == "u") {
+      v = hexv(substr(s, i + 1, 1)) * 4096 + hexv(substr(s, i + 2, 1)) * 256 + hexv(substr(s, i + 3, 1)) * 16 + hexv(substr(s, i + 4, 1))
+      i += 4
+    } else if (c == "b") v = 8
+    else if (c == "f") v = 12
+    else if (c == "n") v = 10
+    else if (c == "r") v = 13
+    else if (c == "t") v = 9
+    if (v < 0) out = out c
+    else if (v >= 32 && v < 127) out = out sprintf("%c", v)
+    else out = out sprintf("\\u%04x", v)
+  }
+  return out
+}
+# A value starts in the open container at depth: kind s (string), l (number or literal), { or [.
+function assign(kind, v,   k) {
+  k = cur[depth]
+  if (depth == 1 && typ[1] == "{") {
+    if (mode == "top" && k == key) topv = (kind == "s") ? v : ""
+    if (mode == "failed" && k == "success") succ = (kind == "l" && v == "false")
+    if (mode == "failed" && k == "status") stat = (kind == "s" && v == "error")
+    if (mode == "kinds" && k == "revision") { seenrev = (kind == "s"); rev = v }
+    # Only the last list counts: the rows of an earlier one are dropped.
+    if (mode == "kinds" && k == "endpoints") { list = (kind == "["); rows = "" }
+  } else if (mode == "kinds" && depth == 3 && typ[3] == "{" && typ[2] == "[" && ckey[2] == "endpoints") {
+    if (k == "method") em = (kind == "s") ? v : ""
+    if (k == "path") ep = (kind == "s") ? v : ""
+    if (k == "kind") ek = (kind == "s") ? v : ""
   }
 }
-function flush() { if (lit != "") { value(cur[depth], "l", lit); lit = "" } }
+function ended() { state = (depth > 0) ? "x" : "e" }
 { text = text $0 "\n" }
 END {
-  n = length(text); depth = 0; instr = 0; esc = 0; lit = ""; found = 0; list = 0; seenrev = 0
-  for (i = 1; i <= n; i++) {
+  # States: v a value, f a value or ], k a key, K a key or }, c a colon, x a comma or the close, e the end.
+  n = length(text); i = 1; depth = 0; state = "v"; bad = 0
+  succ = 0; stat = 0; topv = ""; list = 0; rows = ""; seenrev = 0; rev = ""
+  while (i <= n) {
     c = substr(text, i, 1)
-    if (instr) {
-      if (esc) { esc = 0; buf = buf c }
-      else if (c == "\\") { esc = 1; buf = buf c }
-      else if (c == "\"") {
-        instr = 0
-        if (typ[depth] == "{" && want[depth]) cur[depth] = buf
-        else value(cur[depth], "s", buf)
-      } else buf = buf c
-      continue
+    if (c == " " || c == "\t" || c == "\n" || c == "\r") { i++; continue }
+    if (state == "e") { bad = 1; break }
+    if (c == "\"") {
+      j = i + 1; ok = 0
+      while (j <= n) {
+        d = substr(text, j, 1)
+        if (d == "\"") { ok = 1; break }
+        if (d == "\\") {
+          d = substr(text, j + 1, 1)
+          if (d != "" && index("\"\\/bfnrt", d)) { j += 2; continue }
+          if (d == "u" && substr(text, j + 2, 4) ~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/) { j += 6; continue }
+          break
+        }
+        # A control character, which JSON writes only as an escape.
+        if (d < " ") break
+        j++
+      }
+      if (!ok) { bad = 1; break }
+      s = unesc(substr(text, i + 1, j - i - 1)); i = j + 1
+      if (state == "k" || state == "K") { cur[depth] = s; state = "c"; continue }
+      if (state != "v" && state != "f") { bad = 1; break }
+      assign("s", s); ended(); continue
     }
-    if (c == "\"") { flush(); instr = 1; buf = ""; continue }
+    if (c == "-" || c ~ /^[0-9]$/) {
+      j = i
+      if (c == "-") j++
+      d = substr(text, j, 1)
+      if (d == "0") j++
+      else if (d ~ /^[1-9]$/) { while (substr(text, j, 1) ~ /^[0-9]$/) j++ }
+      else { bad = 1; break }
+      if (substr(text, j, 1) == ".") {
+        j++
+        if (substr(text, j, 1) !~ /^[0-9]$/) { bad = 1; break }
+        while (substr(text, j, 1) ~ /^[0-9]$/) j++
+      }
+      d = substr(text, j, 1)
+      if (d == "e" || d == "E") {
+        j++; d = substr(text, j, 1)
+        if (d == "+" || d == "-") j++
+        if (substr(text, j, 1) !~ /^[0-9]$/) { bad = 1; break }
+        while (substr(text, j, 1) ~ /^[0-9]$/) j++
+      }
+      lit = substr(text, i, j - i); i = j
+    } else if (substr(text, i, 4) == "true" || substr(text, i, 4) == "null") { lit = substr(text, i, 4); i += 4 }
+    else if (substr(text, i, 5) == "false") { lit = "false"; i += 5 }
+    else lit = ""
+    if (lit != "") {
+      if (state != "v" && state != "f") { bad = 1; break }
+      assign("l", lit); ended(); continue
+    }
     if (c == "{" || c == "[") {
-      flush()
-      if (depth == 1 && typ[1] == "{" && cur[1] == "revision") seenrev = 0
-      depth++; typ[depth] = c; want[depth] = (c == "{"); cur[depth] = ""
-      ckey[depth] = ""
-      if (depth > 1 && typ[depth - 1] == "{") ckey[depth] = cur[depth - 1]
-      if (depth == 2 && c == "[" && typ[1] == "{" && ckey[2] == "endpoints") list = 1
+      if (state != "v" && state != "f") { bad = 1; break }
+      assign(c, "")
+      ckey[depth + 1] = (typ[depth] == "{") ? cur[depth] : ""
+      depth++; typ[depth] = c; cur[depth] = ""
       if (depth == 3) { em = ""; ep = ""; ek = "" }
-      continue
+      state = (c == "{") ? "K" : "f"; i++; continue
     }
     if (c == "}" || c == "]") {
-      flush()
-      if (mode == "kinds" && depth == 3 && typ[3] == "{" && typ[2] == "[" && ckey[2] == "endpoints" && em != "" && ep != "") {
-        # Anything but an explicit read counts as an act.
-        if (ek == "read") print em " " ep " read"
-        else print em " " ep " act"
-      }
-      depth--
-      continue
+      if (c == "}" && state != "K" && !(state == "x" && typ[depth] == "{")) { bad = 1; break }
+      if (c == "]" && state != "f" && !(state == "x" && typ[depth] == "[")) { bad = 1; break }
+      # Anything but an explicit read counts as an act.
+      if (mode == "kinds" && depth == 3 && typ[3] == "{" && typ[2] == "[" && ckey[2] == "endpoints" && em != "" && ep != "")
+        rows = rows em " " ep " " (ek == "read" ? "read" : "act") "\n"
+      depth--; i++; ended(); continue
     }
-    if (c == ":") { flush(); want[depth] = 0; continue }
-    if (c == ",") { flush(); if (typ[depth] == "{") want[depth] = 1; continue }
-    if (c == " " || c == "\t" || c == "\n" || c == "\r") { flush(); continue }
-    lit = lit c
+    if (c == ":" && state == "c") { state = "v"; i++; continue }
+    if (c == "," && state == "x") { state = (typ[depth] == "{") ? "k" : "v"; i++; continue }
+    bad = 1; break
   }
-  if (mode == "failed") print found
-  if (mode == "top") printf "%s", top
+  if (state != "e") bad = 1
+  if (mode == "valid") print (bad ? 0 : 1)
+  if (mode == "failed") print ((!bad && (succ || stat)) ? 1 : 0)
+  if (bad) exit 0
+  if (mode == "top") printf "%s", topv
   if (mode == "kinds") {
+    printf "%s", rows
     if (list) print "L"
     if (seenrev) print "R " rev
   }
@@ -258,6 +343,7 @@ setup() {
   [ -n "$raw" ] || fail no_url "No $PRODUCT address. Ask the person for it, then run: $CMD connect --url \"<address>\""
   # A kept address is one line: anything else in the file makes it invalid, not a different address.
   if [ -n "$KEPT" ]; then case "$KEPT" in *[[:space:]]*) bad_url "" ;; esac fi
+  given=$raw
   raw=${raw%/}
   case "$raw" in
     https://*) rest=${raw#https://} PROTO=https ;;
@@ -266,7 +352,15 @@ setup() {
   esac
   hostpart=$(lower "$rest")
   case "$hostpart" in
-    "[::1]" | "[::1]:"*) name="[::1]" port=${hostpart#"[::1]"} ;;
+    "["*"]" | "["*"]:"*)
+      # An IPv6 address, written as a browser writes it.
+      inner=${hostpart#\[}
+      port=${inner#*]}
+      inner=${inner%%]*}
+      case "$inner" in "" | *[!0-9a-f:.]*) bad_url "\"$given\" is not an address." ;; esac
+      v6=$(ipv6_text "$inner") || bad_url "\"$given\" is not an address."
+      name="[$v6]"
+      ;;
     "" | *[!a-z0-9.:-]* | :* | *:*:*) bad_url "Use the address alone, for example https://myapp.example.com." ;;
     *) name=${hostpart%%:*} port=${hostpart#"$name"} ;;
   esac
@@ -282,8 +376,8 @@ setup() {
     case "$name" in 127.0.0.1 | localhost | "[::1]") ;; *) bad_url "The address must start with https:// (http only for this computer)." ;; esac
   fi
   # As a browser writes the origin: lower case, no default port.
-  case "$hostpart" in *:443) [ "$PROTO" = https ] && hostpart=${hostpart%:443} ;; *:80) [ "$PROTO" = http ] && hostpart=${hostpart%:80} ;; esac
-  ISSUER="$PROTO://$hostpart"
+  case "$PROTO$port" in https:443 | http:80) port="" ;; esac
+  ISSUER="$PROTO://$name$port"
   key=$(printf '%s' "$ISSUER" | sha | cut -c1-32)
   FILE="$DIR/$key.json"
   LOCK="$DIR/$key.lock"
@@ -295,6 +389,83 @@ setup() {
   else
     LABEL=$(printf 'Agents on %s' "$(host)" | cut -c1-60)
   fi
+}
+
+# ipv6_text ADDRESS: an IPv6 address (lower case, without its brackets) as a browser writes it, or a failure when it
+# is not one: the WHATWG URL standard's parser and serializer, as Node has them. No leading zeros, the first longest
+# run of two or more zero groups as ::, and a dotted IPv4 end in hex.
+ipv6_text() {
+  printf '%s\n' "$1" | LC_ALL=C awk '
+function hv(c) { return (c == "") ? -1 : index("0123456789abcdef", c) - 1 }
+NR == 1 {
+  s = $0; n = length(s); p = 1; piece = 0; compress = -1
+  for (k = 0; k < 8; k++) a[k] = 0
+  if (substr(s, 1, 1) == ":") {
+    if (substr(s, 2, 1) != ":") exit 1
+    p = 3; piece = 1; compress = 1
+  }
+  while (p <= n) {
+    if (piece == 8) exit 1
+    if (substr(s, p, 1) == ":") {
+      if (compress >= 0) exit 1
+      p++; piece++; compress = piece; continue
+    }
+    value = 0; len = 0
+    while (len < 4 && hv(substr(s, p, 1)) >= 0) { value = value * 16 + hv(substr(s, p, 1)); p++; len++ }
+    c = substr(s, p, 1)
+    if (c == ".") {
+      # A dotted IPv4 end: four decimal numbers of 0 to 255 without leading zeros, as the last two groups.
+      if (len == 0 || piece > 6) exit 1
+      p -= len; seen = 0
+      while (p <= n) {
+        if (seen > 0) { if (substr(s, p, 1) == "." && seen < 4) p++; else exit 1 }
+        d = hv(substr(s, p, 1))
+        if (d < 0 || d > 9) exit 1
+        v4 = -1
+        while ((d = hv(substr(s, p, 1))) >= 0 && d <= 9) {
+          if (v4 == 0) exit 1
+          if (v4 < 0) v4 = 0
+          v4 = v4 * 10 + d
+          if (v4 > 255) exit 1
+          p++
+        }
+        a[piece] = a[piece] * 256 + v4; seen++
+        if (seen == 2 || seen == 4) piece++
+      }
+      if (seen != 4) exit 1
+      break
+    }
+    if (p <= n) {
+      if (c != ":") exit 1
+      p++
+      if (p > n) exit 1
+    }
+    a[piece] = value; piece++
+  }
+  if (compress >= 0) {
+    swaps = piece - compress; piece = 7
+    while (piece != 0 && swaps > 0) {
+      t = a[piece]; a[piece] = a[compress + swaps - 1]; a[compress + swaps - 1] = t
+      piece--; swaps--
+    }
+  } else if (piece != 8) exit 1
+  best = -1; bestlen = 1; i = 0
+  while (i < 8) {
+    if (a[i] != 0) { i++; continue }
+    j = i
+    while (j < 8 && a[j] == 0) j++
+    if (j - i > bestlen) { best = i; bestlen = j - i }
+    i = j
+  }
+  out = ""
+  for (i = 0; i < 8; i++) {
+    if (i == best) { out = out ((i == 0) ? "::" : ":"); i += bestlen - 1; continue }
+    out = out sprintf("%x", a[i])
+    if (i != 7) out = out ":"
+  }
+  print out
+  exit 0
+}'
 }
 
 # An address that is not one: from the kept file, the file is what is wrong.
@@ -356,6 +527,16 @@ check_private() {
   esac
 }
 
+# Before the connection's file is read: the folder must still be one only this user can open, since a restore or a
+# change of its mode may have opened it since secure_dir set it up. Checks only, never changes it; once per command.
+check_dir() {
+  [ "$SECURED" = 1 ] && return 0
+  [ "$CHECKED" = 1 ] && return 0
+  [ -d "$DIR" ] || fail insecure_credentials "$DIR must be a plain folder."
+  check_private "$DIR"
+  CHECKED=1
+}
+
 secure_dir() {
   [ "$SECURED" = 1 ] && return 0
   mkdir -p "$DIR" 2>/dev/null || fail cannot_save "Cannot create $DIR. Allow this agent to write there."
@@ -395,6 +576,7 @@ record_read() {
   record_clear
   [ -e "$FILE" ] || return 1
   [ -f "$FILE" ] || fail insecure_credentials "$FILE must be a plain file."
+  check_dir
   check_private "$FILE"
   grep -q '^{' "$FILE" || fail insecure_credentials "$FILE is damaged. Delete it and connect again."
   for f in $FIELDS; do
@@ -555,11 +737,13 @@ http() {
   STATUS=${out%% *}
   CTYPE=$(lower "${out#* }")
   SENT=yes
+  RESP_JSON=0
   if [ $rc -ne 0 ]; then
     case $rc in 5 | 6 | 7 | 35 | 51 | 53 | 54 | 58 | 59 | 60 | 66 | 77 | 80 | 83 | 90 | 91) SENT=no ;; esac
     UNREACHABLE="Cannot reach $ISSUER ($(tr -d '\r\n' <"$errf" | cut -c1-120))."
     return 1
   fi
+  RESP_JSON=$(json_scan valid "$RESP")
   return 0
 }
 
@@ -572,11 +756,14 @@ oauth() {
   http POST "$ISSUER$p" "$settings"
 }
 
+# The top object's own text about a failure, as the other versions take it (none when the answer is not JSON); a
+# text with escapes left in it is not shown.
 http_fail() {
-  detail=$(jstr error_description "$RESP")
-  [ -n "$detail" ] || detail=$(jstr message "$RESP")
-  [ -n "$detail" ] || detail=$(jstr detail "$RESP")
-  [ -n "$detail" ] || detail=$(jstr error "$RESP")
+  detail=""
+  for f in error_description message detail error; do
+    [ -n "$detail" ] || detail=$(json_scan top "$RESP" "$f")
+    case "$detail" in *\\*) detail="" ;; esac
+  done
   if [ -n "$detail" ]; then fail "http_$STATUS" "$1 failed ($STATUS: $detail)." "$RESP"; fi
   fail "http_$STATUS" "$1 failed ($STATUS)." "$RESP"
 }
@@ -841,6 +1028,17 @@ api_url() {
   # Encoded dots too: a server or proxy that decodes them would take the token out of the API.
   case "$(lower "$p")" in *%2e*) fail bad_path "$bad" ;; esac
   pathonly=${p%%\?*}
+  # The kind is found from the path as it is sent, but a server may decode the path before it routes it. So in the
+  # path an escape may not stand for a character a route template holds as it is (A-Z a-z 0-9 . _ ~ : -), nor for
+  # / \ or % (/api/items/7%2Fsend would match /api/items/{id} here and may run /api/items/{id}/send there), and
+  # every % must start an escape. The query keeps any escape.
+  case "$pathonly" in
+    *% | *%? | *%[!0-9A-Fa-f]* | *%?[!0-9A-Fa-f]* | *%2[5DdEeFf]* | *%3[0-9Aa]* | *%4[1-9A-Fa-f]* | *%5[0-9AaCcFf]* | \
+      *%6[1-9A-Fa-f]* | *%7[0-9AaEe]*) fail bad_path "$bad" ;;
+  esac
+  # Some servers drop ;parameters from a segment before they route (/api/items/export;x runs /api/items/export).
+  # The server's check of the declared kind stops such a call too; this refuses it before it is sent.
+  case "$pathonly" in *\;*) fail bad_path "$bad" ;; esac
   prefixed=0
   for x in $PREFIXES; do
     case "$pathonly" in "$x"?*) prefixed=1 ;; esac
@@ -853,10 +1051,14 @@ api_url() {
   case "$p" in *\?*) HASQ=1 ;; esac
 }
 
-# api_call METHOD URL TOKEN [BODYFILE]: the call, with the policy revision unless it is exempt.
+# api_call METHOD URL TOKEN [BODYFILE]: the call, with the policy revision and the kind (KIND) unless it is exempt.
+# The revision and the kind go together: the server runs the call only when both still hold for the route it picks.
 api_call() {
   settings=$(printf 'header = "Authorization: Bearer %s"\nheader = "%s: %s"' "$3" "$SKILL_HEADER_NAME" "$SKILL_HEADER")
-  if [ -n "$REVISION" ]; then settings=$(printf '%s\nheader = "%s: %s"' "$settings" "$POLICY_HEADER_NAME" "$REVISION"); fi
+  if [ -n "$REVISION" ]; then
+    settings=$(printf '%s\nheader = "%s: %s"\nheader = "%s: %s"' "$settings" "$POLICY_HEADER_NAME" "$REVISION" \
+      "$KIND_HEADER_NAME" "$KIND")
+  fi
   if [ -n "${4:-}" ]; then settings=$(printf '%s\nheader = "Content-Type: application/json"\ndata-binary = "@%s"' "$settings" "$4"); fi
   http "$1" "$2" "$settings" "$API_TIMEOUT_MS"
 }
@@ -1010,8 +1212,10 @@ kind_of() {
       ;;
     esac
   fi
-  k=stale
-  if record_read && [ -n "$R_refreshToken" ]; then k=$(kinds_lookup "$KINDS" "$1" "$2" "$R_generation"); fi
+  # Without a connection there is no list to read: say so, as the other versions do.
+  record_read || fail not_connected "Not connected. Run: $CMD connect"
+  [ -n "$R_refreshToken" ] || fail not_connected "Not connected. Run: $CMD connect"
+  k=$(kinds_lookup "$KINDS" "$1" "$2" "$R_generation")
   if [ "$k" = stale ] || [ "$k" = none ]; then
     kinds_fetch
     k=$(kinds_lookup "$LISTF" "$1" "$2" "$LISTGEN")
@@ -1040,8 +1244,8 @@ cmd_api() {
     else
       if [ "$HAVE_JSON" = 1 ]; then printf '%s' "$JSON_BODY" >"$bodyfile"; else printf '{}' >"$bodyfile"; fi
     fi
-    first=$(tr -d ' \t\r\n' <"$bodyfile" | cut -c1)
-    case "$first" in "{" | "[") ;; *) fail bad_body "The body is not JSON." ;; esac
+    # Exactly what JSON.parse takes, no more (json_scan), checked before anything is sent.
+    [ "$(json_scan valid "$bodyfile")" = 1 ] || fail bad_body "The body is not JSON."
   fi
   listing=0
   [ "$method" = GET ] && [ "$APATH" = "$ENDPOINTS_PATH" ] && [ "$HASQ" = 0 ] && listing=1
@@ -1055,7 +1259,7 @@ cmd_api() {
       isjson=0
       case "$CTYPE" in *json*)
         first=$(tr -d ' \t\r\n' <"$RESP" | cut -c1)
-        case "$first" in "{" | "[") isjson=1 ;; esac
+        case "$first" in "{" | "[") [ "$RESP_JSON" = 1 ] && isjson=1 ;; esac
         ;;
       esac
       if [ $listing = 1 ] && [ $isjson = 1 ] && kinds_build "$RESP" "$lgen"; then kinds_store "$lgen"; fi
@@ -1069,7 +1273,7 @@ cmd_api() {
       ;;
   esac
   # The server's own refusals for agents carry a code and a message (in the top object): passed on as they are. A
-  # message with escapes is left to http_fail, as jstr would.
+  # message with escapes left in it is left to http_fail.
   code=$(json_scan top "$RESP" error)
   message=$(json_scan top "$RESP" message)
   case "$message" in *\\*) message="" ;; esac

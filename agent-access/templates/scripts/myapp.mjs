@@ -48,6 +48,8 @@ const TOKEN_PATH = "/oauth/token"
 const REVOKE_PATH = "/oauth/revoke"
 const SKILL_HEADER_NAME = "x-myapp-skill"
 const POLICY_HEADER_NAME = "x-myapp-policy"
+// The header that carries the kind (read or act) the client found for a call, with the policy revision.
+const KIND_HEADER_NAME = "x-myapp-kind"
 const KINDS_MAGIC = "myapp-kinds"
 // Filled in with the address when the server serves this file.
 const DEFAULT_URL = "__MYAPP_URL__"
@@ -90,7 +92,7 @@ const PATH_CHARS = /^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+$/
 const UNKNOWN_OUTCOME = "The action may have run. Read its state before trying again."
 const NOT_LISTED = `This connection has no such call. Take the path from \`${CMD} endpoints\`, with its {...} parts filled in; never guess it.`
 const UNAVAILABLE = `The list of allowed calls could not be read from ${PRODUCT}, so nothing was sent. Try again in a moment.`
-const POLICY_CHANGED = `${PRODUCT}'s list of allowed calls changed twice while this call was sent. Nothing ran; run it again.`
+const POLICY_CHANGED = `${PRODUCT}'s calls changed, or this path names a different call than the list says. Nothing ran. Run \`${CMD} endpoints\` and take the path from it.`
 const FIELDS = [
   ["v", "n"],
   ["issuer", "s"],
@@ -297,45 +299,71 @@ function secureDir(dir) {
   if (win) {
     // Mode bits are no ACL on Windows: the folder is limited to this user, SYSTEM and Administrators.
     try {
-      const sid = /"(S-1-[0-9-]+)"\s*$/.exec(
-        execFileSync(system32("whoami.exe"), ["/user", "/fo", "csv", "/nh"]).toString().trim(),
-      )
-      if (!sid) throw new Error("no SID")
+      const sid = userSid()
       execFileSync(
         system32("icacls.exe"),
-        [
-          dir,
-          "/inheritance:r",
-          "/grant:r",
-          `*${sid[1]}:(OI)(CI)F`,
-          "*S-1-5-18:(OI)(CI)F",
-          "*S-1-5-32-544:(OI)(CI)F",
-          "/Q",
-        ],
+        [dir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F", "/Q"],
         { stdio: "ignore" },
       )
       // The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
       // ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)
-      icacls([dir, "/setowner", `*${sid[1]}`, "/T", "/Q"])
+      icacls([dir, "/setowner", `*${sid}`, "/T", "/Q"])
       // Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
-      const saved = path.join(dir, `.acl-${hex(4)}`)
-      try {
-        icacls([dir, "/save", saved, "/T", "/Q"])
-        const other = othersAllowed(fs.readFileSync(saved).toString("utf16le"), sid[1])
-        if (other) throw new Fail("insecure_credentials", `Others can open ${dir} (${other}). Remove their access.`)
-      } finally {
-        fs.rmSync(saved, { force: true })
-      }
+      assertOnlyUser(dir, sid)
     } catch (e) {
       if (e instanceof Fail) throw e
       throw new Fail("insecure_credentials", `Could not limit ${dir} to your user (icacls failed).`)
     }
-  } else {
-    if (st.uid !== process.getuid())
-      throw new Fail("insecure_credentials", `${dir} belongs to another user. Use a folder of your own.`)
-    if (st.mode & 0o077) throw new Fail("insecure_credentials", `Others can open ${dir}. Run: chmod 700 '${dir}'`)
-  }
+  } else assertOwnMode(dir, st)
   secured = true
+}
+
+let checked = false
+/**
+ * Before the connection's file is read: the folder must still be one only this user can open, since a restore or a
+ * change of its permissions may have opened it since secureDir set it up. Checks only, never changes it; once per
+ * command.
+ */
+function checkDir(dir) {
+  if (secured || checked) return
+  const st = fs.lstatSync(dir)
+  if (st.isSymbolicLink() || !st.isDirectory())
+    throw new Fail("insecure_credentials", `${dir} must be a plain folder, not a link.`)
+  if (win) {
+    try {
+      assertOnlyUser(dir, userSid())
+    } catch (e) {
+      if (e instanceof Fail) throw e
+      throw new Fail("insecure_credentials", `Could not check who can open ${dir} (icacls failed).`)
+    }
+  } else assertOwnMode(dir, st)
+  checked = true
+}
+
+function userSid() {
+  const sid = /"(S-1-[0-9-]+)"\s*$/.exec(
+    execFileSync(system32("whoami.exe"), ["/user", "/fo", "csv", "/nh"]).toString().trim(),
+  )
+  if (!sid) throw new Error("no SID")
+  return sid[1]
+}
+
+/** Reads the folder's and its files' ACLs back and allows no one but this user, SYSTEM and Administrators. */
+function assertOnlyUser(dir, sid) {
+  const saved = path.join(dir, `.acl-${hex(4)}`)
+  try {
+    icacls([dir, "/save", saved, "/T", "/Q"])
+    const other = othersAllowed(fs.readFileSync(saved).toString("utf16le"), sid)
+    if (other) throw new Fail("insecure_credentials", `Others can open ${dir} (${other}). Remove their access.`)
+  } finally {
+    fs.rmSync(saved, { force: true })
+  }
+}
+
+function assertOwnMode(dir, st) {
+  if (st.uid !== process.getuid())
+    throw new Fail("insecure_credentials", `${dir} belongs to another user. Use a folder of your own.`)
+  if (st.mode & 0o077) throw new Fail("insecure_credentials", `Others can open ${dir}. Run: chmod 700 '${dir}'`)
 }
 
 /** icacls over the folder and its files; tried again while other commands add or replace files in it. */
@@ -394,6 +422,7 @@ function readRecord(ctx) {
   let text
   try {
     checkFile(ctx.file)
+    checkDir(ctx.dir)
     text = fs.readFileSync(ctx.file, "utf8")
   } catch (e) {
     if (e.code === "ENOENT") return null
@@ -613,7 +642,7 @@ const NOT_SENT = new Set([
   "ERR_TLS_CERT_ALTNAME_INVALID",
 ])
 
-async function request(ctx, method, url, { form, bearer, json, policy, timeout = OAUTH_TIMEOUT_MS } = {}) {
+async function request(ctx, method, url, { form, bearer, json, policy, kind, timeout = OAUTH_TIMEOUT_MS } = {}) {
   const headers = { accept: "application/json" }
   let payload
   if (form) {
@@ -627,7 +656,11 @@ async function request(ctx, method, url, { form, bearer, json, policy, timeout =
     headers.authorization = `Bearer ${bearer}`
     headers[SKILL_HEADER_NAME] = SKILL_HEADER
   }
-  if (policy) headers[POLICY_HEADER_NAME] = policy
+  // The revision and the kind go together: the server runs the call only when both still hold for the route it picks.
+  if (policy) {
+    headers[POLICY_HEADER_NAME] = policy
+    headers[KIND_HEADER_NAME] = kind
+  }
   let res
   try {
     // No redirects: a secret never follows one to another address.
@@ -646,7 +679,8 @@ async function request(ctx, method, url, { form, bearer, json, policy, timeout =
   }
   let text
   try {
-    text = await res.text()
+    // As the other versions read it: res.text() would drop a byte order mark, which is not JSON.
+    text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(await res.arrayBuffer())
   } catch {
     // The answer started and broke off: the server got the request and may have acted on it.
     throw new Fail("unreachable", `The answer from ${ctx.issuer} broke off.`, { sent: true })
@@ -935,6 +969,15 @@ function apiTarget(ctx, p) {
   if (!PATH_CHARS.test(value) || value.includes("://") || value.startsWith("//") || /%2e/i.test(value))
     throw new Fail("bad_path", bad)
   const pathOnly = value.split("?")[0]
+  // The kind is found from the path as it is sent, but a server may decode the path before it routes it. So in the
+  // path an escape may not stand for a character a route template holds as it is (A-Z a-z 0-9 . _ ~ : -), nor for
+  // / \ or % (/api/items/7%2Fsend would match /api/items/{id} here and may run /api/items/{id}/send there), and
+  // every % must start an escape. The query keeps any escape.
+  if (/%(?![0-9A-Fa-f]{2})|%(2[5DEF]|3[0-9A]|4[1-9A-F]|5[0-9ACF]|6[1-9A-F]|7[0-9AE])/i.test(pathOnly))
+    throw new Fail("bad_path", bad)
+  // Some servers drop ;parameters from a segment before they route (/api/items/export;x runs /api/items/export).
+  // The server's check of the declared kind stops such a call too; this refuses it before it is sent.
+  if (pathOnly.includes(";")) throw new Fail("bad_path", bad)
   if (!PREFIXES.some((x) => pathOnly.startsWith(x) && pathOnly.length > x.length)) throw new Fail("bad_path", bad)
   if (pathOnly.split("/").some((s) => s === "." || s === "..")) throw new Fail("bad_path", bad)
   const url = new URL(`${ctx.issuer}${value}`)
@@ -1076,7 +1119,13 @@ async function send(ctx, method, url, json, call) {
   for (;;) {
     let r
     try {
-      r = await request(ctx, method, url, { bearer: token, json, policy: call.revision, timeout: API_TIMEOUT_MS })
+      r = await request(ctx, method, url, {
+        bearer: token,
+        json,
+        policy: call.revision,
+        kind: call.kind,
+        timeout: API_TIMEOUT_MS,
+      })
     } catch (e) {
       if (e.code !== "unreachable") throw e
       e.extra.api = true

@@ -19,6 +19,9 @@ const VERSION_PLACEHOLDER = "__MYAPP_SKILL_VERSION__"
 const SKILL_REVISION = 1
 const SCOPE = "read act"
 const KINDS_MAGIC = "myapp-kinds"
+const CLIENT_ID = "myapp-cli"
+const POLICY_HEADER = "x-myapp-policy"
+const KIND_HEADER = "x-myapp-kind"
 /* ---- End of product constants. ---- */
 
 const win = process.platform === "win32"
@@ -28,6 +31,8 @@ const impls = (process.env[`${ENV}IMPLS`] ?? (win ? "node,ps,pwsh" : "node,sh"))
 const tmpBase = process.env[`${ENV}TEST_TMP`] || os.tmpdir()
 fs.mkdirSync(tmpBase, { recursive: true })
 const root = fs.mkdtempSync(path.join(tmpBase, `${NAME}-skill-`))
+// A byte order mark, which no JSON starts with.
+const BOM = String.fromCharCode(0xfeff)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const connectNext = (issuer) =>
   `End your turn with a reply that shows the person the link and the code and asks them to reply once they approve. When they reply, run: ${NAME} connect --wait --url "${issuer}"`
@@ -339,6 +344,51 @@ for (const impl of impls) {
       assert.equal(notJson.json?.error, "bad_body", notJson.out + notJson.err)
     })
 
+    it("sends a body that is JSON, any JSON, and refuses anything else before sending", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      // From a file, so that no shell or argument quoting changes them on the way.
+      const file = path.join(inst.base, "body.json")
+      let sent = 0
+      for (const [text, value] of [
+        ["null", null],
+        ["12", 12],
+        ['"text"', "text"],
+        ["[1,2]", [1, 2]],
+        ['{"a":{"b":[true,false,null,-0.5e+2]}}', { a: { b: [true, false, null, -50] } }],
+        [' \t{"x":"\\u00e9\\n"}\r\n', { x: "\xe9\n" }],
+      ]) {
+        fs.writeFileSync(file, text)
+        const r = await run(impl, inst, server, ["post", "/api/items", "--json-file", file])
+        assert.deepEqual(r.json?.data?.body, value, `${JSON.stringify(text)}: ${r.out}${r.err}`)
+        sent++
+      }
+      for (const text of [
+        "",
+        " ",
+        '{"name":',
+        '{"name":"a"',
+        "{'a':1}",
+        "{a:1}",
+        "01",
+        "NaN",
+        "[1,]",
+        '{"a":1,}',
+        '{"a":1} x',
+        '{"a":1}{"b":2}',
+        '"\\x"',
+        '"a\tb"',
+        "/*c*/{}",
+        "tru",
+        `${BOM}{}`,
+      ]) {
+        fs.writeFileSync(file, text)
+        const r = await run(impl, inst, server, ["post", "/api/items", "--json-file", file])
+        assert.equal(r.json?.error, "bad_body", `${JSON.stringify(text)}: ${r.out}${r.err}`)
+      }
+      assert.equal(server.arrivals("POST", "/api/items"), sent, "nothing else was sent")
+    })
+
     it("sends put, patch and delete, with or without a body", async () => {
       const inst = fresh()
       await listed(impl, inst, server)
@@ -386,6 +436,150 @@ for (const impl of impls) {
         assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}`)
       }
       assert.equal([...server.arrivalCounts.values()].reduce((a, b) => a + b, 0), 0, "nothing reached the API")
+    })
+
+    it("refuses an escape in the path that a server would decode into another call, and sends nothing", async () => {
+      const inst = fresh()
+      // Act routes next to the read route /api/items/{id}, which the encoded paths below match as they are. The fake
+      // server decodes the path before it routes, as many real servers do.
+      server.policy.unshift(
+        { method: "GET", path: "/api/items/{id}/send", kind: "act", area: "items", description: "Send an item." },
+        { method: "GET", path: "/api/items/export", kind: "act", area: "items", description: "Export the items." },
+      )
+      await listed(impl, inst, server)
+      const arrived = () => [...server.arrivalCounts.values()].reduce((a, b) => a + b, 0)
+      const listedArrivals = arrived()
+      for (const p of [
+        "/api/items/7%2Fsend",
+        "/api/items/7%2fsend",
+        "/api/items/7%5Csend",
+        "/api/items/7%5csend",
+        "/api/items/7%252Fsend",
+        "/api/items/%65xport",
+        "/api/items/expor%74",
+        "/api/items/%45%58",
+        "/api/items/7%3Asend",
+        "/api/items/7%7E",
+        "/api/items/7%",
+        "/api/items/7%2",
+        "/api/items/7%zz",
+      ]) {
+        const r = await run(impl, inst, server, ["get", p])
+        assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}${r.err}`)
+      }
+      assert.equal(arrived(), listedArrivals, "nothing reached the API")
+      // Other escapes in the path, and any escape in the query, are sent as they are.
+      const spaced = await run(impl, inst, server, ["get", "/api/items/a%20b"])
+      assert.equal(spaced.json?.data?.path, "/api/items/a%20b", spaced.out + spaced.err)
+      const q = await run(impl, inst, server, ["get", "/api/items?q=a%2Fb%5Cc%25d"])
+      assert.equal(q.json?.data?.query, "?q=a%2Fb%5Cc%25d", q.out + q.err)
+      assert.equal(server.runs("GET", "/api/items/{id}/send"), 0)
+      assert.equal(server.runs("GET", "/api/items/export"), 0)
+    })
+
+    it("never runs an act that a case-insensitive router picked for a path the list holds as a read", async () => {
+      const inst = fresh()
+      // /api/items/EXPORT matches the read /api/items/{id} in the client; the server, like ASP.NET Core by default,
+      // routes it to the act /api/items/export. Its answer is lost, which would make the client send a read again.
+      server.policy.unshift({ method: "GET", path: "/api/items/export", kind: "act", area: "items", description: "" })
+      server.caseInsensitiveRoutes = true
+      await listed(impl, inst, server)
+      server.afterRun = ["drop", "drop"]
+      const r = await run(impl, inst, server, ["get", "/api/items/EXPORT"])
+      server.afterRun = []
+      assert.equal(server.runs("GET", "/api/items/export"), 0, "the act never ran")
+      assert.equal(r.json?.error, "policy_changed", r.out + r.err)
+      assert.equal(server.arrivals("GET", "/api/items/EXPORT"), 2, "sent again once, after the list was read again")
+      // The path the list holds as an act goes as an act, and runs.
+      const act = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(act.code, 0, act.out + act.err)
+      assert.equal(server.runs("GET", "/api/items/export"), 1)
+    })
+
+    it("never runs an act that a router which drops ;parameters picked for a path the list holds as a read", async () => {
+      const inst = fresh()
+      server.policy.unshift({ method: "GET", path: "/api/items/export", kind: "act", area: "items", description: "" })
+      server.stripPathParameters = true
+      await listed(impl, inst, server)
+      const arrived = () => [...server.arrivalCounts.values()].reduce((a, b) => a + b, 0)
+      const listedArrivals = arrived()
+      // A ; in the path is refused before anything is sent.
+      server.afterRun = ["drop", "drop"]
+      for (const p of ["/api/items/export;x", "/api/items/export;", "/api/items/7;v=1"]) {
+        const r = await run(impl, inst, server, ["get", p])
+        assert.equal(r.json?.error, "bad_path", `${p}: ${r.out}${r.err}`)
+      }
+      assert.equal(arrived(), listedArrivals, "nothing reached the API")
+      assert.equal(server.runs("GET", "/api/items/export"), 0)
+      // An escaped ; passes the client as the read /api/items/{id}; the server decodes it, drops the parameter and
+      // picks the act. Its check of the declared kind stops it before the route runs.
+      const r = await run(impl, inst, server, ["get", "/api/items/export%3Bx"])
+      server.afterRun = []
+      assert.equal(server.runs("GET", "/api/items/export"), 0, "the act never ran")
+      assert.equal(r.json?.error, "policy_changed", r.out + r.err)
+      assert.equal(server.arrivals("GET", "/api/items/export%3Bx"), 2)
+      // The query keeps a ;.
+      const q = await run(impl, inst, server, ["get", "/api/items?q=a;b"])
+      assert.equal(q.json?.data?.query, "?q=a;b", q.out + q.err)
+    })
+
+    it("declares the kind it found with every call but access and the listing", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      const g = await run(impl, inst, server, ["get", "/api/items/7"])
+      assert.equal(g.code, 0, g.out + g.err)
+      assert.equal(server.last.kind, "read")
+      assert.equal(server.last.policy, server.revision())
+      const search = await run(impl, inst, server, ["post", "/api/items/search", "--json", "{}"])
+      assert.equal(search.code, 0, search.out + search.err)
+      assert.equal(server.last.kind, "read", "a read sent as POST")
+      const p = await run(impl, inst, server, ["post", "/api/items", "--json", '{"name":"a"}'])
+      assert.equal(p.code, 0, p.out + p.err)
+      assert.equal(server.last.kind, "act")
+      assert.equal(server.runs("POST", "/api/items"), 1)
+      assert.equal((await run(impl, inst, server, ["access"])).code, 0)
+      assert.equal(server.last.kind, undefined, "not on access")
+      assert.equal((await run(impl, inst, server, ["endpoints"])).code, 0)
+      assert.equal(server.last.kind, undefined, "not on the listing")
+    })
+
+    it("takes an IPv6 address in brackets, written as a browser writes it", async () => {
+      const inst = fresh()
+      for (const [given, origin] of [
+        ["https://[2001:db8::1]", "https://[2001:db8::1]"],
+        ["https://[2001:0DB8:0:0::1]:8443/", "https://[2001:db8::1]:8443"],
+        ["https://[2001:db8::1]:443", "https://[2001:db8::1]"],
+        ["https://[1:0:0:2:0:0:0:3]", "https://[1:0:0:2::3]"],
+        ["https://[1:0:0:2:0:0:3:4]", "https://[1::2:0:0:3:4]"],
+        ["https://[0:0:0:0:0:0:0:0]", "https://[::]"],
+        ["https://[::1:2:3:4:5:6:7]", "https://[0:1:2:3:4:5:6:7]"],
+        ["https://[1:2:3:4:5:6:7::]", "https://[1:2:3:4:5:6:7:0]"],
+        ["https://[::ffff:1.2.3.4]", "https://[::ffff:102:304]"],
+        ["https://[1:2:3:4:5:6:1.2.3.4]", "https://[1:2:3:4:5:6:102:304]"],
+        ["http://[0:0:0:0:0:0:0:1]:8080", "http://[::1]:8080"],
+      ]) {
+        const r = await run(impl, inst, null, ["status", "--url", given])
+        assert.equal(r.json?.url, origin, `${given}: ${r.out}${r.err}`)
+      }
+      for (const bad of [
+        "http://[2001:db8::1]",
+        "https://[2001:db8::1::2]",
+        "https://[12345::1]",
+        "https://[g::1]",
+        "https://[:1::2]",
+        "https://[1:2:3:4:5:6:7]",
+        "https://[1:2:3:4:5:6:7:8:9]",
+        "https://[1::2:3:4:5:6:7:8]",
+        "https://[::ffff:01.2.3.4]",
+        "https://[::ffff:1.2.3]",
+        "https://[::ffff:1.2.3.256]",
+        "https://[1:2:3:4:5:6:7:1.2.3.4]",
+        "https://[::1%25eth0]",
+        "https://[]",
+      ]) {
+        const r = await run(impl, inst, null, ["status", "--url", bad])
+        assert.equal(r.json?.error, "insecure_url", `${bad}: ${r.out}${r.err}`)
+      }
     })
 
     it("sends nothing when the list of allowed calls cannot be read", async () => {
@@ -516,6 +710,67 @@ for (const impl of impls) {
       server.afterRun.push({ status: 401, body: { error: "upstream_denied", message: "No." } })
       await run(impl, inst, server, ["get", "/api/items/7"])
       assert.equal(server.arrivals("GET", "/api/items/7"), 1)
+    })
+
+    it("reads a refusal or a list only from a complete, strict JSON answer", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      // After an act ran: an answer that is not strict JSON holds no refusal marker, so the act is not sent again.
+      let runs = 0
+      for (const [status, body] of [
+        [429, '{"error":"busy"'],
+        [429, '{"error":"busy",'],
+        [429, "{'error':'busy'}"],
+        [429, '{error:"busy"}'],
+        [429, '{"error":"busy",}'],
+        [429, '/*x*/{"error":"busy"}'],
+        [429, '{"error":"busy"} x'],
+        [429, '{"error":"busy","error":null}'],
+        [429, `${BOM}{"error":"busy"}`],
+        [409, '{"error":"policy_changed"'],
+        [409, "{'error':'policy_changed'}"],
+      ]) {
+        server.afterRun.push({ status, body })
+        const r = await run(impl, inst, server, ["post", "/api/items/7/archive"])
+        runs++
+        assert.equal(r.json?.error, `http_${status}`, `${body}: ${r.out}${r.err}`)
+        assert.equal(server.runs("POST", "/api/items/{id}/archive"), runs, `${body}: ran once`)
+        assert.equal(server.arrivals("POST", "/api/items/7/archive"), runs, `${body}: sent once`)
+      }
+      // A duplicated key counts as JSON.parse reads it: the last value wins.
+      server.beforeRun.push({ status: 429, body: '{"error":"busy","error":null}' })
+      const notBusy = await run(impl, inst, server, ["post", "/api/items/8/archive"])
+      assert.equal(notBusy.json?.error, "http_429", notBusy.out + notBusy.err)
+      assert.equal(server.arrivals("POST", "/api/items/8/archive"), 1, "not sent again")
+      server.beforeRun.push({ status: 429, body: '{"error":null,"error":"busy"}' })
+      const busy = await run(impl, inst, server, ["post", "/api/items/9/archive"])
+      assert.equal(busy.code, 0, busy.out + busy.err)
+      assert.equal(server.arrivals("POST", "/api/items/9/archive"), 2, "sent again once")
+      // A listing that is not a complete, strict JSON list is no list: nothing is sent. (Without the kept list, so
+      // that the call needs a listing; a listing that is no list is not kept.)
+      for (const f of fs.readdirSync(inst.creds)) if (f.endsWith(".kinds")) fs.rmSync(path.join(inst.creds, f))
+      const entry = '{"method":"GET","path":"/api/items","kind":"read"}'
+      for (const body of [
+        `{"endpoints":[${entry}],"revision":"abc"`,
+        `{"endpoints":[${entry}`,
+        `{"endpoints":[${entry}],"revision":"abc"}}`,
+        `{'endpoints':[{'method':'GET','path':'/api/items','kind':'read'}],'revision':'abc'}`,
+        `{"endpoints":[${entry},],"revision":"abc"}`,
+        `{"endpoints":[${entry}],"revision":"abc","endpoints":"all"}`,
+        `{"endpoints":[${entry}],"revision":"abc","revision":null}`,
+      ]) {
+        server.listingBody = body
+        const r = await run(impl, inst, server, ["get", "/api/items"])
+        assert.equal(r.json?.error, "endpoints_unavailable", `${body}: ${r.out}${r.err}`)
+      }
+      assert.equal(server.arrivals("GET", "/api/items"), 0, "the call was not sent")
+      // The last of two kinds wins too (the server's table says act as well, so its check of the kind agrees).
+      server.setKind("GET", "/api/items", "act")
+      server.listingBody = `{"endpoints":[{"method":"GET","path":"/api/items","kind":"read","kind":"act"}],"revision":"${server.revision()}"}`
+      server.afterRun.push("drop")
+      const act = await run(impl, inst, server, ["get", "/api/items"])
+      assert.equal(act.json?.error, "outcome_unknown", act.out + act.err)
+      assert.equal(server.arrivals("GET", "/api/items"), 1, "an act is not sent again")
     })
 
     it("refreshes and sends again once after the token refusal", async () => {
@@ -1049,6 +1304,20 @@ for (const impl of impls) {
       })
     }
 
+    it("stops using a connection once others can open its folder, even with a live access token", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      const refreshes = server.counts.refresh
+      // As a restore or a change of the folder's permissions would leave it.
+      if (win) execFileSync("icacls", [inst.creds, "/grant", "*S-1-1-0:(OI)(CI)R", "/Q"], { stdio: "ignore" })
+      else fs.chmodSync(inst.creds, 0o755)
+      const r = await run(impl, inst, server, ["get", "/api/items"])
+      assert.equal(r.json?.error, "insecure_credentials", r.out + r.err)
+      assert.equal(server.arrivals("GET", "/api/items"), 0, "nothing was sent")
+      assert.equal(server.counts.refresh, refreshes)
+      if (!win) assert.equal(fs.statSync(inst.creds).mode & 0o777, 0o755, "not changed silently")
+    })
+
     if (!win) {
       it("refuses a credentials folder others can open", async () => {
         const inst = fresh()
@@ -1061,6 +1330,79 @@ for (const impl of impls) {
     }
   })
 }
+
+// The server's half of the kind contract, pinned on the fake server with requests made by hand: the policy check
+// refuses a call before its route runs unless it carries the current revision and the kind of the route the router
+// picked.
+describe(`${NAME} fake server policy check`, () => {
+  let server
+  let token
+  before(async () => {
+    server = await startFakeServer()
+    const form = (o) => ({
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: CLIENT_ID, ...o }).toString(),
+    })
+    const d = await (await fetch(`${server.issuer}/oauth/device`, form({ scope: SCOPE }))).json()
+    server.approve()
+    const t = await fetch(
+      `${server.issuer}/oauth/token`,
+      form({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: d.device_code }),
+    )
+    token = (await t.json()).access_token
+  })
+  after(() => server.close())
+  const call = async (method, p, headers) => {
+    const r = await fetch(`${server.issuer}${p}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, ...headers },
+      ...(method === "GET" ? {} : { body: "{}" }),
+    })
+    return { status: r.status, json: await r.json().catch(() => null) }
+  }
+  const refused = (r, what) => {
+    assert.equal(r.status, 409, what)
+    assert.equal(r.json?.error, "policy_changed", what)
+  }
+
+  it("refuses a missing, unknown or wrong kind, or a missing revision, before the route runs", async () => {
+    server.reset()
+    const rev = server.revision()
+    refused(await call("GET", "/api/items/7", { [POLICY_HEADER]: rev }), "no kind")
+    for (const kind of ["", "READ", "Act", "write", "read,act"])
+      refused(await call("GET", "/api/items/7", { [POLICY_HEADER]: rev, [KIND_HEADER]: kind }), `kind ${kind}`)
+    refused(await call("GET", "/api/items/7", { [POLICY_HEADER]: rev, [KIND_HEADER]: "act" }), "act for a read")
+    refused(await call("POST", "/api/items", { [POLICY_HEADER]: rev, [KIND_HEADER]: "read" }), "read for an act")
+    refused(await call("GET", "/api/items/7", { [KIND_HEADER]: "read" }), "no revision")
+    assert.equal(server.runs("GET", "/api/items/{id}"), 0)
+    assert.equal(server.runs("POST", "/api/items"), 0)
+    assert.equal((await call("GET", "/api/items/7", { [POLICY_HEADER]: rev, [KIND_HEADER]: "read" })).status, 200)
+    assert.equal((await call("POST", "/api/items", { [POLICY_HEADER]: rev, [KIND_HEADER]: "act" })).status, 200)
+    assert.equal(server.runs("GET", "/api/items/{id}"), 1)
+    assert.equal(server.runs("POST", "/api/items"), 1)
+  })
+
+  it("checks the kind of the route its router picked, not of the path as it was sent", async () => {
+    server.reset()
+    server.policy.unshift({ method: "GET", path: "/api/items/export", kind: "act", area: "items", description: "" })
+    const rev = server.revision()
+    const read = { [POLICY_HEADER]: rev, [KIND_HEADER]: "read" }
+    const act = { [POLICY_HEADER]: rev, [KIND_HEADER]: "act" }
+    server.caseInsensitiveRoutes = true
+    refused(await call("GET", "/api/items/EXPORT", read), "a case change")
+    assert.equal(server.runs("GET", "/api/items/export"), 0)
+    assert.equal((await call("GET", "/api/items/EXPORT", act)).status, 200)
+    assert.equal(server.runs("GET", "/api/items/export"), 1)
+    server.caseInsensitiveRoutes = false
+    server.stripPathParameters = true
+    for (const p of ["/api/items/export;x", "/api/items/export%3Bx", "/api/items/export;"])
+      refused(await call("GET", p, read), p)
+    assert.equal(server.runs("GET", "/api/items/export"), 1)
+    assert.equal((await call("GET", "/api/items/7;v=1", read)).status, 200)
+    assert.equal(server.runs("GET", "/api/items/{id}"), 1)
+  })
+})
 
 // Two versions on one computer share one connection, one list and one lock.
 const [first, second] = impls

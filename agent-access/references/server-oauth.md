@@ -63,11 +63,12 @@ Every stack refuses to start when a secret it needs is missing or equals an exam
 
 ## `oidc-provider` notes (n8n-ops)
 
-n8n-ops built its server on `oidc-provider` 9. Its configuration maps most requirements to documented options:
+n8n-ops built its server on `oidc-provider` 9. Most requirements map to documented options. The table names the option to use, which is not always what n8n-ops wrote:
 
 | Requirement | `oidc-provider` option |
 |---|---|
-| S5 | `features.registration: { enabled: true, issueRegistrationAccessToken: false }`, with the registration body validated and its scopes dropped before the provider reads it. `features.pushedAuthorizationRequests.enabled: false`, so every request passes the authorize checks. |
+| S5 | `features.registration: { enabled: true, issueRegistrationAccessToken: false }`. For the product's own rules (redirect URI shapes, dropping a requested `scope`), list one property in `extraClientMetadata.properties`: its documented `validator` then runs on every registration and update, whether or not the client sent that property, and may check and change the client's `metadata`. Do not rewrite the request body before the provider reads it. `features.pushedAuthorizationRequests.enabled: false`, so every request passes the authorize checks. |
+| S6 | `features.clientIdMetadataDocument` (experimental in 9.x, enabled with an `ack`), with `allowFetch` to refuse a URL before the fetch and `allowClient` to refuse a resolved client. Whether the library's fetch connects to the checked address, ignores the environment's proxy and refuses redirects (S6) must be checked in its documentation for the installed version, including its documented hooks for outgoing HTTP requests. What it does not cover is a gap for Shlomi. |
 | S7 | A static client in `clients` with `token_endpoint_auth_method: "none"`, the device grant and `refresh_token`, no redirect URIs. `extraParams: ["client_label"]` for the label. |
 | S8 | `pkce: { required: () => true }`. `features.devInteractions.enabled: false`. |
 | S9 | `features.deviceFlow` with `charset: "base-20"`, `mask: "****-****"`, and the page hooks `userCodeInputSource`, `userCodeConfirmSource`, `successSource`. |

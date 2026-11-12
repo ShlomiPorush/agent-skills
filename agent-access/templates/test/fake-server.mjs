@@ -12,6 +12,7 @@ const ACCESS_PATH = "/api/agent/access"
 const ENDPOINTS_PATH = "/api/agent/endpoints"
 const SKILL_HEADER = "x-myapp-skill"
 const POLICY_HEADER = "x-myapp-policy"
+const KIND_HEADER = "x-myapp-kind"
 /* ---- End of product constants. ---- */
 
 /** A sample policy table: every route an agent may call, with its area and kind (read or act, by effect). */
@@ -30,7 +31,8 @@ export const SAMPLE_POLICY = [
 
 const id = () => randomBytes(18).toString("base64url")
 
-function templateMatches(template, p) {
+/** Whether a route template matches a path; `anyCase` compares the fixed parts as a case-insensitive router does. */
+function templateMatches(template, p, anyCase = false) {
   const t = template.split("/")
   const s = p.split("/")
   for (let i = 0; i < t.length; i++) {
@@ -38,7 +40,7 @@ function templateMatches(template, p) {
     if (i >= s.length) return false
     if (/^\{[^}]*\}$/.test(t[i])) {
       if (s[i] === "") return false
-    } else if (t[i] !== s[i]) return false
+    } else if (anyCase ? t[i].toLowerCase() !== s[i].toLowerCase() : t[i] !== s[i]) return false
   }
   return t.length === s.length
 }
@@ -76,11 +78,16 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       reclassifyAfterListing: null,
       // Refusals before any route code runs, one per call to a route of the table (not access or the listing), in
       // order: "invalid_token" (401 with the challenge), "busy" (429), "policy_changed" (409, even with the
-      // right revision).
+      // right revision), or { status, body, headers } to answer with instead (the body as it is when a string).
       beforeRun: [],
       // What happens after the route's code ran, one per run, in order: "drop" (no answer), "truncate" (the answer
       // starts and breaks off), or { status, body, headers } to answer with.
       afterRun: [],
+      // The router: like ASP.NET Core's, it matches the fixed parts of a route in any case (/api/items/EXPORT runs
+      // /api/items/export); like Spring's or Tomcat's, it drops ;parameters from every segment (/api/items/export;x
+      // runs /api/items/export). Either way it can pick another route than the client matched.
+      caseInsensitiveRoutes: false,
+      stripPathParameters: false,
       policy: SAMPLE_POLICY.map((e) => ({ ...e })),
       last: {},
     })
@@ -222,6 +229,17 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       s.arrivalCounts.set(key, (s.arrivalCounts.get(key) ?? 0) + 1)
       s.last.skill = req.headers[SKILL_HEADER]
       s.last.policy = req.headers[POLICY_HEADER]
+      s.last.kind = req.headers[KIND_HEADER]
+      // Like many real servers, it decodes the path before it routes: /api/items/7%2Fsend runs the route of
+      // /api/items/7/send, and /api/items/%65xport the one of /api/items/export.
+      let routed
+      try {
+        routed = decodeURIComponent(url.pathname)
+      } catch {
+        return send(400, { error: "bad_request", message: "The path is not valid." })
+      }
+      // The ;parameters go after the decoding, the harsher order: /api/items/export%3Bx runs /api/items/export too.
+      if (s.stripPathParameters) routed = routed.replace(/;[^/]*/g, "")
       // 1. The token check, before anything else.
       const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "")
       const a = s.access.get(bearer)
@@ -230,14 +248,15 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       const scope = s.grants.get(a.grant).scope
 
       // 2. The calls that are exempt from the policy header: access and the listing.
-      if (req.method === "GET" && url.pathname === ACCESS_PATH)
+      if (req.method === "GET" && routed === ACCESS_PATH)
         return send(200, { label: "Agents", scope, areas: [...new Set(s.policy.map((e) => e.area))] })
-      if (req.method === "GET" && url.pathname === ENDPOINTS_PATH) {
+      if (req.method === "GET" && routed === ENDPOINTS_PATH) {
         s.counts.listing++
         if (s.listingStatus) return send(s.listingStatus, { error: "server_error" })
         if (s.listingBody !== null) return send(200, s.listingBody)
         const area = url.searchParams.get("area")
-        const endpoints = s.policy.filter((e) => area === null || e.area === area)
+        // A copy of the table as it is now: a change after this listing must not reach the answer to it.
+        const endpoints = s.policy.filter((e) => area === null || e.area === area).map((e) => ({ ...e }))
         const revision = s.revision()
         if (s.reclassifyAfterListing) {
           const { method, path, kind } = s.reclassifyAfterListing
@@ -249,14 +268,23 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
 
       // 3. The limits layer and the policy check: refusals before any route code runs.
       const before = s.beforeRun.shift()
+      if (before && typeof before === "object") return send(before.status, before.body ?? "", before.headers ?? {})
       if (before === "invalid_token")
         return send(401, { error: "invalid_token" }, { "www-authenticate": 'Bearer error="invalid_token"' })
       if (before === "busy")
         return send(429, { error: "busy", message: "MyApp is busy with this connection's other calls. Try again." })
-      if (before === "policy_changed" || req.headers[POLICY_HEADER] !== s.revision())
-        return send(409, { error: "policy_changed", message: "The list of calls changed. Read it again." })
-      const rule = s.policy.find((e) => e.method === req.method && templateMatches(e.path, url.pathname))
+      // The policy check: the call carries the current revision and the kind the client found for it, and that kind
+      // is the kind of the route the router picked. Otherwise nothing runs: either the list changed, or the path
+      // names another call here than in the client's copy of the list.
+      const changed = () => send(409, { error: "policy_changed", message: "The list of calls changed. Read it again." })
+      const declared = req.headers[KIND_HEADER]
+      if (before === "policy_changed" || req.headers[POLICY_HEADER] !== s.revision()) return changed()
+      if (declared !== "read" && declared !== "act") return changed()
+      const rule = s.policy.find(
+        (e) => e.method === req.method && templateMatches(e.path, routed, s.caseInsensitiveRoutes),
+      )
       if (!rule) return send(404, { error: "not_found", message: "No such call." })
+      if (rule.kind !== declared) return changed()
 
       // 4. The route's code runs.
       const ran = `${rule.method} ${rule.path}`

@@ -47,7 +47,7 @@ The person chose the areas when approving. <One sentence per area: what it reads
    | `get '/api/agent/endpoints'` | any | read | Every call this connection may make (`myapp endpoints`). |
 
 3. An action is any call whose kind is `act`, whatever its method. Before every action, tell the person what you will do and get their OK. Then run it with `--json-file <file>` (or `--json '<body>'` in a POSIX shell). Writing the body to a file avoids quoting trouble.
-4. The server refuses what the person did not allow or what agents may never do (`http_403`). Never retry an `outcome_unknown`: the action may have run, so read its state first and tell the person. `policy_changed` means MyApp's calls changed: run `myapp endpoints` again, then decide.
+4. The server refuses what the person did not allow or what agents may never do (`http_403`). Never retry an `outcome_unknown`: the action may have run, so read its state first and tell the person. `policy_changed` means MyApp's calls changed, or the path names a different call than the list says: run `myapp endpoints` again, take the path from it, then decide.
 
 Agents never <what agents may never do in this product>. The server enforces this.
 

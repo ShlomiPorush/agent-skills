@@ -33,6 +33,8 @@ $TokenPath = '/oauth/token'
 $RevokePath = '/oauth/revoke'
 $SkillHeaderName = 'x-myapp-skill'
 $PolicyHeaderName = 'x-myapp-policy'
+# The header that carries the kind (read or act) the client found for a call, with the policy revision.
+$KindHeaderName = 'x-myapp-kind'
 $KindsMagic = 'myapp-kinds'
 # Filled in with the address when the server serves this file.
 $DefaultUrl = '__MYAPP_URL__'
@@ -90,7 +92,7 @@ $PathChars = "^[A-Za-z0-9._~!$&'()*+,;=:@/?%-]+\z"
 $UnknownOutcome = 'The action may have run. Read its state before trying again.'
 $NotListed = "This connection has no such call. Take the path from ``$Cmd endpoints``, with its {...} parts filled in; never guess it."
 $Unavailable = "The list of allowed calls could not be read from $Product, so nothing was sent. Try again in a moment."
-$PolicyChanged = "$Product's list of allowed calls changed twice while this call was sent. Nothing ran; run it again."
+$PolicyChanged = "$Product's calls changed, or this path names a different call than the list says. Nothing ran. Run ``$Cmd endpoints`` and take the path from it."
 $Fields = @(
   @('v', 'n'), @('issuer', 's'), @('label', 's'), @('generation', 's'), @('refreshToken', 's'), @('accessToken', 's'),
   @('accessExpiresAt', 'n'), @('scope', 's'), @('refreshStartedAt', 'n'), @('refreshRetried', 'n'), @('deviceCode', 's'),
@@ -182,9 +184,89 @@ function Get-Context([string]$urlOption) {
   }
 }
 
-# Windows PowerShell (.NET Framework) writes the IPv6 loopback out in full; the origin is written as a browser does.
+# An IPv6 address (without its brackets) as a browser writes it, or $null when it is not one: the WHATWG URL
+# standard's parser and serializer, as Node and the sh version have them. Lower case without leading zeros, the
+# first longest run of two or more zero groups as ::, and a dotted IPv4 end in hex. .NET writes some addresses
+# otherwise (Windows PowerShell in full and upper case) and reads some wrongly (Windows PowerShell takes
+# [::1:2:3:4:5:6:7] for all zeros, and drops a %25 zone), so the address is read from the text.
+function ConvertTo-Ipv6Text([string]$text) {
+  $s = $text.ToLowerInvariant(); $n = $s.Length
+  $hex = '0123456789abcdef'
+  $a = New-Object int[] 8
+  $p = 0; $piece = 0; $compress = -1
+  if ($n -gt 0 -and $s[0] -eq ':') {
+    if ($n -lt 2 -or $s[1] -ne ':') { return $null }
+    $p = 2; $piece = 1; $compress = 1
+  }
+  while ($p -lt $n) {
+    if ($piece -eq 8) { return $null }
+    if ($s[$p] -eq ':') {
+      if ($compress -ge 0) { return $null }
+      $p++; $piece++; $compress = $piece; continue
+    }
+    $value = 0; $length = 0
+    while ($length -lt 4 -and $p -lt $n -and $hex.IndexOf($s[$p]) -ge 0) { $value = $value * 16 + $hex.IndexOf($s[$p]); $p++; $length++ }
+    if ($p -lt $n -and $s[$p] -eq '.') {
+      # A dotted IPv4 end: four decimal numbers of 0 to 255 without leading zeros, as the last two groups.
+      if ($length -eq 0 -or $piece -gt 6) { return $null }
+      $p -= $length
+      $seen = 0
+      while ($p -lt $n) {
+        if ($seen -gt 0) { if ($s[$p] -eq '.' -and $seen -lt 4) { $p++ } else { return $null } }
+        if ($p -ge $n -or $hex.IndexOf($s[$p]) -lt 0 -or $hex.IndexOf($s[$p]) -gt 9) { return $null }
+        $v4 = -1
+        while ($p -lt $n -and $hex.IndexOf($s[$p]) -ge 0 -and $hex.IndexOf($s[$p]) -le 9) {
+          if ($v4 -eq 0) { return $null }
+          if ($v4 -lt 0) { $v4 = 0 }
+          $v4 = $v4 * 10 + $hex.IndexOf($s[$p])
+          if ($v4 -gt 255) { return $null }
+          $p++
+        }
+        $a[$piece] = $a[$piece] * 256 + $v4
+        $seen++
+        if ($seen -eq 2 -or $seen -eq 4) { $piece++ }
+      }
+      if ($seen -ne 4) { return $null }
+      break
+    }
+    if ($p -lt $n) {
+      if ($s[$p] -ne ':') { return $null }
+      $p++
+      if ($p -ge $n) { return $null }
+    }
+    $a[$piece] = $value; $piece++
+  }
+  if ($compress -ge 0) {
+    $swaps = $piece - $compress; $piece = 7
+    while ($piece -ne 0 -and $swaps -gt 0) {
+      $t = $a[$piece]; $a[$piece] = $a[$compress + $swaps - 1]; $a[$compress + $swaps - 1] = $t
+      $piece--; $swaps--
+    }
+  } elseif ($piece -ne 8) { return $null }
+  $best = -1; $bestLength = 1; $i = 0
+  while ($i -lt 8) {
+    if ($a[$i] -ne 0) { $i++; continue }
+    $j = $i
+    while ($j -lt 8 -and $a[$j] -eq 0) { $j++ }
+    if ($j - $i -gt $bestLength) { $best = $i; $bestLength = $j - $i }
+    $i = $j
+  }
+  $out = ''
+  for ($i = 0; $i -lt 8; $i++) {
+    if ($i -eq $best) {
+      if ($i -eq 0) { $out += '::' } else { $out += ':' }
+      $i += $bestLength - 1
+      continue
+    }
+    $out += $a[$i].ToString('x')
+    if ($i -ne 7) { $out += ':' }
+  }
+  $out
+}
+
+# The host of an address as a browser writes it.
 function Get-HostName([Uri]$u) {
-  if ($u.Host -eq '[0000:0000:0000:0000:0000:0000:0000:0001]') { return '[::1]' }
+  if ($u.HostNameType -eq [UriHostNameType]::IPv6) { return "[$(ConvertTo-Ipv6Text $u.Host.Trim('[', ']'))]" }
   $u.Host
 }
 function Get-Origin([Uri]$u) { "$($u.Scheme)://$(Get-HostName $u)$($u.Authority.Substring($u.Host.Length))" }
@@ -193,14 +275,20 @@ function Get-Origin([Uri]$u) { "$($u.Scheme)://$(Get-HostName $u)$($u.Authority.
 function Get-Issuer([string]$raw) {
   $u = $null
   if (-not [Uri]::TryCreate($raw, [UriKind]::Absolute, [ref]$u)) { Fail 'insecure_url' "`"$raw`" is not an address." }
-  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains (Get-HostName $u)
+  $name = Get-HostName $u
+  if ($raw -match '^[a-z][a-z0-9+.-]*://\[([^\]]*)\]') {
+    $v6 = ConvertTo-Ipv6Text $Matches[1]
+    if ($null -eq $v6) { Fail 'insecure_url' "`"$raw`" is not an address." }
+    $name = "[$v6]"
+  }
+  $loopback = @('127.0.0.1', '[::1]', 'localhost') -contains $name
   if (-not ($u.Scheme -eq 'https' -or ($u.Scheme -eq 'http' -and $loopback))) {
     Fail 'insecure_url' 'The address must start with https:// (http only for this computer).'
   }
   if ($u.UserInfo -or $u.Query -or $u.Fragment -or ($u.AbsolutePath -ne '/')) {
     Fail 'insecure_url' 'Use the address alone, for example https://myapp.example.com.'
   }
-  $issuer = Get-Origin $u
+  $issuer = "$($u.Scheme)://$name$($u.Authority.Substring($u.Host.Length))"
   if ($issuer -cnotmatch $SafeOrigin) { Fail 'insecure_url' 'Use the address alone, for example https://myapp.example.com.' }
   $issuer
 }
@@ -297,31 +385,58 @@ function Protect-Dir([string]$dir) {
   }
   # Limited to this user, SYSTEM and Administrators (well-known SIDs, so no localized names).
   try {
-    $who = (& $Whoami /user /fo csv /nh) -join ''
-    if ($who -notmatch '"(S-1-[0-9-]+)"\s*$') { throw 'no SID' }
-    $sid = $Matches[1]
+    $sid = Get-UserSid
     & $Icacls $dir /inheritance:r /grant:r "*${sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /Q *> $null
     if ($LASTEXITCODE -ne 0) { throw 'icacls' }
     # The owner may always change an ACL, so the folder and its files must be this user's. (Only now: taking
     # ownership needs the full control just granted. No /C, which would hide a failure behind exit code 0.)
     Invoke-Icacls @($dir, '/setowner', "*$sid", '/T', '/Q')
     # Granting does not remove other entries: read the folder's and its files' ACLs back and allow no one else.
-    # (icacls, not Get-Acl: started from PowerShell 7, Windows PowerShell may fail to load the module Get-Acl is in.)
-    $saved = Join-Path $dir ".acl-$(Hex 4)"
-    try {
-      Invoke-Icacls @($dir, '/save', $saved, '/T', '/Q')
-      $other = Find-OtherAllowed ([IO.File]::ReadAllText($saved, [Text.Encoding]::Unicode)) $sid
-      if ($other) { Fail 'insecure_credentials' "Others can open $dir ($other). Remove their access." }
-    } finally { if ([IO.File]::Exists($saved)) { [IO.File]::Delete($saved) } }
+    Assert-OnlyUser $dir $sid
   } catch [ClientFail] { throw } catch {
     Fail 'insecure_credentials' "Could not limit $dir to your user ($($_.Exception.Message))."
   }
   $script:Secured = $true
 }
 
+# Before the connection's file is read: the folder must still be one only this user can open, since a restore or a
+# change of its permissions may have opened it since Protect-Dir set it up. Checks only, never changes it; once per
+# command.
+$script:Checked = $false
+function Test-Dir([string]$dir) {
+  if ($script:Secured -or $script:Checked) { return }
+  $item = Get-Item -LiteralPath $dir -Force
+  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $item.PSIsContainer) {
+    Fail 'insecure_credentials' "$dir must be a plain folder, not a link."
+  }
+  try { Assert-OnlyUser $dir (Get-UserSid) } catch [ClientFail] { throw } catch {
+    Fail 'insecure_credentials' "Could not check who can open $dir ($($_.Exception.Message))."
+  }
+  $script:Checked = $true
+}
+
+function Get-UserSid {
+  $who = (& $Whoami /user /fo csv /nh) -join ''
+  if ($who -notmatch '"(S-1-[0-9-]+)"\s*$') { throw 'no SID' }
+  $Matches[1]
+}
+
+# Reads the folder's and its files' ACLs back and allows no one but this user, SYSTEM and Administrators. (icacls,
+# not Get-Acl: started from PowerShell 7, Windows PowerShell may fail to load the module Get-Acl is in.)
+function Assert-OnlyUser([string]$dir, [string]$sid) {
+  $saved = Join-Path $dir ".acl-$(Hex 4)"
+  try {
+    Invoke-Icacls @($dir, '/save', $saved, '/T', '/Q')
+    $other = Find-OtherAllowed ([IO.File]::ReadAllText($saved, [Text.Encoding]::Unicode)) $sid
+    if ($other) { Fail 'insecure_credentials' "Others can open $dir ($other). Remove their access." }
+  } finally { if ([IO.File]::Exists($saved)) { [IO.File]::Delete($saved) } }
+}
+
+# Attributes of the path itself, without following a link. Not Get-Item: while another command replaces the file,
+# Get-Item can report it as a folder (PowerShell 7), which would refuse a plain file.
 function Test-PlainFile([string]$file) {
-  $item = Get-Item -LiteralPath $file -Force
-  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $item.PSIsContainer) {
+  $attr = [IO.File]::GetAttributes($file)
+  if (($attr -band [IO.FileAttributes]::ReparsePoint) -or ($attr -band [IO.FileAttributes]::Directory)) {
     Fail 'insecure_credentials' "$file must be a plain file."
   }
 }
@@ -337,7 +452,8 @@ function New-Record($ctx) {
 
 function Read-Record($ctx) {
   if (-not [IO.File]::Exists($ctx.file)) { return $null }
-  Test-PlainFile $ctx.file
+  try { Test-PlainFile $ctx.file } catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { return $null }
+  Test-Dir $ctx.dir
   try { $text = Read-Shared $ctx.file } catch [IO.FileNotFoundException] { return $null }
   try { $parsed = $text | ConvertFrom-Json } catch {
     Fail 'insecure_credentials' "$($ctx.file) is damaged. Delete it and connect again."
@@ -535,8 +651,9 @@ function New-TcpClient([string]$hostName) {
   New-Object System.Net.Sockets.TcpClient
 }
 
-# One request. $bearer marks an API call (with its longer time limit); $policy is the revision to send with it.
-function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer, $json, [string]$policy = '') {
+# One request. $bearer marks an API call (with its longer time limit); $policy is the revision to send with it, and
+# $kind the kind the client found for the call.
+function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer, $json, [string]$policy = '', [string]$kind = '') {
   $timeoutMs = 15000
   if ($bearer) { $timeoutMs = $ApiTimeoutMs }
   $u = [Uri]$url
@@ -549,7 +666,8 @@ function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer
   }
   $head = "$method $($u.PathAndQuery) HTTP/1.1`r`nHost: $($u.Authority)`r`nAccept: application/json`r`nConnection: close`r`nUser-Agent: $Cmd`r`n"
   if ($bearer) { $head += "Authorization: Bearer $bearer`r`n${SkillHeaderName}: $SkillHeader`r`n" }
-  if ($policy) { $head += "${PolicyHeaderName}: $policy`r`n" }
+  # The revision and the kind go together: the server runs the call only when both still hold for the route it picks.
+  if ($policy) { $head += "${PolicyHeaderName}: $policy`r`n${KindHeaderName}: $kind`r`n" }
   if ($null -ne $bodyBytes) { $head += "Content-Type: $contentType`r`nContent-Length: $($bodyBytes.Length)`r`n" }
   elseif (@('POST', 'PUT', 'PATCH') -contains $method) { $head += "Content-Length: 0`r`n" }
   $head += "`r`n"
@@ -632,13 +750,63 @@ function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer
   $text = $Utf8.GetString($bytes)
   $parsed = $null
   $isJson = $false
-  # Only text that looks like JSON is parsed: PowerShell 7 would also accept some text that is not.
-  if ($text -match '^\s*([\{\["\-0-9]|true\s*$|false\s*$|null\s*$)') {
+  # Only strict JSON is parsed (see Test-JsonText): ConvertFrom-Json alone also reads text that is not JSON.
+  if (Test-JsonText $text) {
     try { $parsed = $text | ConvertFrom-Json; $isJson = $true } catch {}
   }
   $challenge = ''
   if ($headers.ContainsKey('www-authenticate')) { $challenge = $headers['www-authenticate'] }
   @{ status = $status; text = $text; bytes = $bytes; json = $parsed; isJson = $isJson; challenge = $challenge }
+}
+
+# One JSON token, after any whitespace: a string, a number or a literal, or a structural character (RFC 8259).
+$JsonToken = [regex]'\G[ \t\n\r]*(?:("(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)|([{}\[\]:,]))'
+
+# Whether a text is one complete JSON value with nothing after it but whitespace, as JSON.parse reads it (the Node
+# version) and json_scan in the sh version. ConvertFrom-Json alone also takes single quotes, names without quotes,
+# comments, trailing commas, NaN and leading zeros, so a broken answer could read as one of the server's refusals.
+# A key given twice counts as JSON.parse reads it: the last value wins, as ConvertFrom-Json also does. Valid JSON
+# that ConvertFrom-Json cannot hold (an empty key, two keys that differ only in case, or in Windows PowerShell a
+# number beyond the double range) reads as no JSON in this version only, so no refusal or list is taken from it.
+function Test-JsonText([string]$text) {
+  $stack = New-Object System.Collections.Generic.List[string]
+  $state = 'value'
+  $at = 0
+  while ($true) {
+    $m = $JsonToken.Match($text, $at)
+    if (-not $m.Success) { break }
+    $at += $m.Length
+    if ($state -eq 'end') { return $false }
+    if ($m.Groups[1].Success -and ($state -eq 'key' -or $state -eq 'firstKey')) { $state = 'colon'; continue }
+    $top = ''
+    if ($stack.Count) { $top = $stack[$stack.Count - 1] }
+    if ($m.Groups[3].Success) {
+      $t = $m.Groups[3].Value
+      if ($t -eq '{' -or $t -eq '[') {
+        if ($state -ne 'value' -and $state -ne 'first') { return $false }
+        $stack.Add($t)
+        if ($t -eq '{') { $state = 'firstKey' } else { $state = 'first' }
+        continue
+      }
+      if ($t -eq ':') {
+        if ($state -ne 'colon') { return $false }
+        $state = 'value'; continue
+      }
+      if ($t -eq ',') {
+        if ($state -ne 'next') { return $false }
+        if ($top -eq '{') { $state = 'key' } else { $state = 'value' }
+        continue
+      }
+      # A closing bracket: of an empty container, or after a value in one of its kind.
+      $open = '['; $empty = 'first'
+      if ($t -eq '}') { $open = '{'; $empty = 'firstKey' }
+      if (-not ($state -eq $empty -or ($state -eq 'next' -and $top -eq $open))) { return $false }
+      $stack.RemoveAt($stack.Count - 1)
+    } elseif ($state -ne 'value' -and $state -ne 'first') { return $false }
+    # A value ended.
+    if ($stack.Count) { $state = 'next' } else { $state = 'end' }
+  }
+  $state -eq 'end' -and $text.Substring($at) -match '^[ \t\n\r]*\z'
 }
 
 function Invoke-OAuth($ctx, [string]$path, $form) {
@@ -884,6 +1052,14 @@ function Get-ApiTarget($ctx, [string]$p) {
   # Encoded dots too: a server or proxy that decodes them would take the token out of the API.
   if ($p -notmatch $PathChars -or $p.Contains('://') -or $p.StartsWith('//') -or $p -match '%2e') { Fail 'bad_path' $bad }
   $pathOnly = ($p -split '\?', 2)[0]
+  # The kind is found from the path as it is sent, but a server may decode the path before it routes it. So in the
+  # path an escape may not stand for a character a route template holds as it is (A-Z a-z 0-9 . _ ~ : -), nor for
+  # / \ or % (/api/items/7%2Fsend would match /api/items/{id} here and may run /api/items/{id}/send there), and
+  # every % must start an escape. The query keeps any escape.
+  if ($pathOnly -match '%(?![0-9a-f]{2})|%(2[5def]|3[0-9a]|4[1-9a-f]|5[0-9acf]|6[1-9a-f]|7[0-9ae])') { Fail 'bad_path' $bad }
+  # Some servers drop ;parameters from a segment before they route (/api/items/export;x runs /api/items/export).
+  # The server's check of the declared kind stops such a call too; this refuses it before it is sent.
+  if ($pathOnly.Contains(';')) { Fail 'bad_path' $bad }
   if (-not (Test-Prefixed $pathOnly)) { Fail 'bad_path' $bad }
   foreach ($s in ($pathOnly -split '/')) { if ($s -eq '.' -or $s -eq '..') { Fail 'bad_path' $bad } }
   $u = $null
@@ -1018,7 +1194,7 @@ function Send-Api($ctx, [string]$method, [string]$url, $json, $call) {
   $token = Get-AccessToken $ctx ''
   $refreshed = $false; $busyRetried = $false; $netRetried = $false; $policyRetried = $false
   while ($true) {
-    try { $r = Invoke-Http $ctx $method $url $null $token $json $call.revision } catch [ClientFail] {
+    try { $r = Invoke-Http $ctx $method $url $null $token $json $call.revision $call.kind } catch [ClientFail] {
       $e = $_.Exception
       if ($e.Code -ne 'unreachable') { throw }
       $e.Api = $true
@@ -1068,7 +1244,7 @@ function Test-FailedAnswer($data) {
 
 function Invoke-Api($ctx, [string]$method, [string]$p, $json) {
   $target = Get-ApiTarget $ctx $p
-  if ($null -ne $json) { try { [void]($json | ConvertFrom-Json) } catch { Fail 'bad_body' 'The body is not JSON.' } }
+  if ($null -ne $json -and -not (Test-JsonText $json)) { Fail 'bad_body' 'The body is not JSON.' }
   $listing = $method -ceq 'GET' -and $target.path -ceq $EndpointsPath -and -not $target.hasQuery
   $generation = ''
   if ($listing) { $rec = Read-Record $ctx; if ($rec) { $generation = $rec.generation } }
@@ -1116,7 +1292,8 @@ function Invoke-Disconnect($ctx) {
 
 function Get-Body($o, $fallback) {
   $body = $o.json
-  if ($null -ne $o.jsonFile) { try { $body = [IO.File]::ReadAllText($o.jsonFile, $Utf8) } catch { Fail 'bad_body' "Cannot read $($o.jsonFile)." } }
+  # The file as it is, as the other versions read it: ReadAllText would drop a byte order mark, which is not JSON.
+  if ($null -ne $o.jsonFile) { try { $body = $Utf8.GetString([IO.File]::ReadAllBytes($o.jsonFile)) } catch { Fail 'bad_body' "Cannot read $($o.jsonFile)." } }
   if ($null -eq $body) { $body = $fallback }
   $body
 }
