@@ -6,6 +6,7 @@ Personal [Agent Skills](https://code.claude.com/docs/en/skills) that work with b
 
 | Skill | What it does |
 |---|---|
+| [`agent-access`](agent-access/SKILL.md) | Adds person-approved agent connection to a web product: AI agents such as Claude Code, Codex and MCP clients act in it for a person who approves them in the browser, through an MCP server with OAuth 2.1 and an agent skill the product serves. Distilled from n8n-ops and Comply: an ordered adoption workflow, the rules, the lessons learned, and client script templates in Node, PowerShell and sh with a contract test suite. |
 | [`cross-review`](cross-review/SKILL.md) | Brings a partner agent from the other model provider into T3 Code to review plans and results, by risk tier. A bundled PowerShell gate reads only the usage limits from T3's cache and says whether the partner's quota allows a review. |
 | [`file-pr`](file-pr/SKILL.md) | Reviews the current Git branch and files a concise, review-ready pull request that follows the repository's contribution rules, without merging or deploying. |
 | [`html-communication`](html-communication/SKILL.md) | Presents plans, specs, reports, and UI mock comparisons as self-contained Hebrew HTML documents with correct right-to-left layout, in one shared visual style from a bundled template. A bundled PowerShell script embeds the fonts (Onest, Noto Sans Hebrew, IBM Plex Mono, under the SIL Open Font License) and checks each document for what YAAPS would reject before it is published. |

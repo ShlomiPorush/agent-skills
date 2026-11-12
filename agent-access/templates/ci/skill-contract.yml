@@ -1,0 +1,40 @@
+# An example job for the product that ships the myapp skill. It runs the client scripts' contract tests on the
+# systems where agents run them: Windows (Node, Windows PowerShell 5.1, PowerShell 7) and macOS (Node, POSIX sh).
+# Run the same tests on Linux (MYAPP_IMPLS=node,sh) in the product's main checks, or add ubuntu-latest below.
+#
+# To adopt it, copy the job into the product's workflow and set working-directory to the folder that holds the
+# contract tests (the scripts are expected in ../scripts from there). The job uses no secret: the fake server makes
+# every token and code at run time.
+name: Skill contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  skill:
+    name: Skill (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            impls: node,ps,pwsh
+          - os: macos-latest
+            impls: node,sh
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Contract tests
+        working-directory: skill/test
+        env:
+          MYAPP_IMPLS: ${{ matrix.impls }}
+          MYAPP_TEST_TMP: ${{ runner.temp }}
+        run: node --test --test-concurrency=1 contract.test.mjs
