@@ -844,6 +844,14 @@ for (const impl of impls) {
         assert.equal(r.code, 0, `${body}: ${r.out}${r.err}`)
         assert.deepEqual(r.json?.data, JSON.parse(body), body)
       }
+      // Any JSON value keeps its type in data: a null, a boolean, a number or a string is not turned into text.
+      for (const body of ["null", "false", "12", '"x"', "[]"]) {
+        server.afterRun.push({ status: 200, body })
+        const r = await run(impl, inst, server, ["get", "/api/items/7"])
+        assert.equal(r.code, 0, `${body}: ${r.out}${r.err}`)
+        assert.ok(r.json && "data" in r.json, `${body}: ${r.out}${r.err}`)
+        assert.deepEqual(r.json.data, JSON.parse(body), body)
+      }
     })
 
     // A read and an act that both match one path: the static read /api/items/export and the act /api/items/{id}.

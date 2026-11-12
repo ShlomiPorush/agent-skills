@@ -1274,12 +1274,8 @@ cmd_api() {
   api_send "$method" "$URL" "$bodyfile"
   case "$STATUS" in
     2??)
-      isjson=0
-      case "$CTYPE" in *json*)
-        first=$(tr -d ' \t\r\n' <"$RESP" | cut -c1)
-        case "$first" in "{" | "[") [ "$RESP_JSON" = 1 ] && isjson=1 ;; esac
-        ;;
-      esac
+      # Any strict JSON value is JSON, null, false, numbers and strings included, as in the other versions.
+      isjson=$RESP_JSON
       if [ $listing = 1 ] && [ $isjson = 1 ] && kinds_build "$RESP" "$lgen"; then kinds_store "$lgen"; fi
       if [ $isjson = 1 ]; then data=$(tr -d '\r\n' <"$RESP"); else data=$(json_string "$RESP"); fi
       if [ $isjson = 1 ] && [ "$(json_scan failed "$RESP")" = 1 ]; then

@@ -685,11 +685,14 @@ async function request(ctx, method, url, { form, bearer, json, policy, kind, tim
     // The answer started and broke off: the server got the request and may have acted on it.
     throw new Fail("unreachable", `The answer from ${ctx.issuer} broke off.`, { sent: true })
   }
+  // isJson says whether the text is JSON at all: a JSON null is still JSON.
   let parsed = null
+  let isJson = false
   try {
     parsed = JSON.parse(text)
+    isJson = true
   } catch {}
-  return { status: res.status, text, json: parsed, challenge: res.headers.get("www-authenticate") ?? "" }
+  return { status: res.status, text, json: parsed, isJson, challenge: res.headers.get("www-authenticate") ?? "" }
 }
 
 const oauth = (ctx, p, form) =>
@@ -1181,7 +1184,7 @@ async function send(ctx, method, url, json, call) {
 
 /** The answer as JSON text on one line: a JSON answer as it is (its line breaks are only spacing), text as a string. */
 function dataText(r) {
-  if (r.json !== null) return r.text.replace(/[\r\n]/g, "").trim()
+  if (r.isJson) return r.text.replace(/[\r\n]/g, "").trim()
   return JSON.stringify(r.text)
 }
 
