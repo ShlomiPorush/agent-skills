@@ -749,64 +749,114 @@ function Invoke-Http($ctx, [string]$method, [string]$url, $form, [string]$bearer
   if ($null -eq $bytes) { throw [ClientFail]::new('unreachable', "The answer from $($ctx.issuer) broke off.") }
   $text = $Utf8.GetString($bytes)
   $parsed = $null
-  $isJson = $false
-  # Only strict JSON is parsed (see Test-JsonText): ConvertFrom-Json alone also reads text that is not JSON.
-  if (Test-JsonText $text) {
-    try { $parsed = $text | ConvertFrom-Json; $isJson = $true } catch {}
+  $fields = $null
+  # Only strict JSON is read (see Read-JsonText): ConvertFrom-Json alone also reads text that is not JSON. The answer
+  # is JSON even when ConvertFrom-Json cannot hold it; its markers come from the strict reader's fields.
+  $doc = Read-JsonText $text
+  $isJson = $null -ne $doc
+  if ($isJson) {
+    $fields = $doc.fields
+    try { $parsed = $text | ConvertFrom-Json } catch {}
   }
   $challenge = ''
   if ($headers.ContainsKey('www-authenticate')) { $challenge = $headers['www-authenticate'] }
-  @{ status = $status; text = $text; bytes = $bytes; json = $parsed; isJson = $isJson; challenge = $challenge }
+  @{ status = $status; text = $text; bytes = $bytes; json = $parsed; isJson = $isJson; fields = $fields; challenge = $challenge }
 }
 
 # One JSON token, after any whitespace: a string, a number or a literal, or a structural character (RFC 8259).
 $JsonToken = [regex]'\G[ \t\n\r]*(?:("(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)|([{}\[\]:,]))'
 
-# Whether a text is one complete JSON value with nothing after it but whitespace, as JSON.parse reads it (the Node
-# version) and json_scan in the sh version. ConvertFrom-Json alone also takes single quotes, names without quotes,
-# comments, trailing commas, NaN and leading zeros, so a broken answer could read as one of the server's refusals.
-# A key given twice counts as JSON.parse reads it: the last value wins, as ConvertFrom-Json also does. Valid JSON
-# that ConvertFrom-Json cannot hold (an empty key, two keys that differ only in case, or in Windows PowerShell a
-# number beyond the double range) reads as no JSON in this version only, so no refusal or list is taken from it.
-function Test-JsonText([string]$text) {
+$JsonEscape = [regex]'\\(?:u([0-9a-fA-F]{4})|(.))'
+
+# A JSON string token as JSON.parse reads it, escapes and all ("busy" is busy).
+function ConvertFrom-JsonStringToken([string]$token) {
+  $inner = $token.Substring(1, $token.Length - 2)
+  if (-not $inner.Contains('\')) { return $inner }
+  $JsonEscape.Replace($inner, [Text.RegularExpressions.MatchEvaluator] {
+      param($m)
+      if ($m.Groups[1].Success) { return [string][char][Convert]::ToInt32($m.Groups[1].Value, 16) }
+      switch -CaseSensitive ($m.Groups[2].Value) {
+        'b' { "`b" } 'f' { "`f" } 'n' { "`n" } 'r' { "`r" } 't' { "`t" } default { $m.Groups[2].Value }
+      }
+    })
+}
+
+# A top field's value that is neither a string nor true or false (a number, null, an object or an array).
+$NotTextOrBool = [DBNull]::Value
+
+# Reads a text that is one complete JSON value with nothing after it but whitespace, as JSON.parse reads it (the Node
+# version) and json_scan in the sh version, or returns $null when it is not. ConvertFrom-Json alone also takes single
+# quotes, names without quotes, comments, trailing commas, NaN and leading zeros, so a broken answer could read as one
+# of the server's refusals. The result holds the top object's own fields (`fields`, empty for any other value): a
+# string, $true or $false, or $NotTextOrBool, by their exact keys with escapes read, the last value of a key given
+# twice, as JSON.parse reads them. The refusal and failure markers come only from these fields, never from
+# ConvertFrom-Json, which matches keys in any case, turns other values into strings, unrolls a top array (PowerShell
+# 7) and cannot hold some valid JSON (an empty key, two keys that differ only in case, or in Windows PowerShell a
+# number beyond the double range).
+function Read-JsonText([string]$text) {
   $stack = New-Object System.Collections.Generic.List[string]
+  # Ordinal, so case-sensitive: "Error" is not "error".
+  $fields = New-Object 'System.Collections.Generic.Dictionary[string,object]'
+  $key = ''
   $state = 'value'
   $at = 0
   while ($true) {
     $m = $JsonToken.Match($text, $at)
     if (-not $m.Success) { break }
     $at += $m.Length
-    if ($state -eq 'end') { return $false }
-    if ($m.Groups[1].Success -and ($state -eq 'key' -or $state -eq 'firstKey')) { $state = 'colon'; continue }
+    if ($state -eq 'end') { return $null }
+    # Inside the top object itself (not nested deeper).
+    $inTop = $stack.Count -eq 1 -and $stack[0] -eq '{'
+    if ($m.Groups[1].Success -and ($state -eq 'key' -or $state -eq 'firstKey')) {
+      if ($inTop) { $key = ConvertFrom-JsonStringToken $m.Groups[1].Value }
+      $state = 'colon'; continue
+    }
     $top = ''
     if ($stack.Count) { $top = $stack[$stack.Count - 1] }
     if ($m.Groups[3].Success) {
       $t = $m.Groups[3].Value
       if ($t -eq '{' -or $t -eq '[') {
-        if ($state -ne 'value' -and $state -ne 'first') { return $false }
+        if ($state -ne 'value' -and $state -ne 'first') { return $null }
+        if ($inTop) { $fields[$key] = $NotTextOrBool }
         $stack.Add($t)
         if ($t -eq '{') { $state = 'firstKey' } else { $state = 'first' }
         continue
       }
       if ($t -eq ':') {
-        if ($state -ne 'colon') { return $false }
+        if ($state -ne 'colon') { return $null }
         $state = 'value'; continue
       }
       if ($t -eq ',') {
-        if ($state -ne 'next') { return $false }
+        if ($state -ne 'next') { return $null }
         if ($top -eq '{') { $state = 'key' } else { $state = 'value' }
         continue
       }
       # A closing bracket: of an empty container, or after a value in one of its kind.
       $open = '['; $empty = 'first'
       if ($t -eq '}') { $open = '{'; $empty = 'firstKey' }
-      if (-not ($state -eq $empty -or ($state -eq 'next' -and $top -eq $open))) { return $false }
+      if (-not ($state -eq $empty -or ($state -eq 'next' -and $top -eq $open))) { return $null }
       $stack.RemoveAt($stack.Count - 1)
-    } elseif ($state -ne 'value' -and $state -ne 'first') { return $false }
+    } elseif ($state -ne 'value' -and $state -ne 'first') { return $null }
+    elseif ($inTop) {
+      # A string, number or literal as a value of the top object.
+      if ($m.Groups[1].Success) { $fields[$key] = ConvertFrom-JsonStringToken $m.Groups[1].Value }
+      elseif ($m.Groups[2].Value -ceq 'true') { $fields[$key] = $true }
+      elseif ($m.Groups[2].Value -ceq 'false') { $fields[$key] = $false }
+      else { $fields[$key] = $NotTextOrBool }
+    }
     # A value ended.
     if ($stack.Count) { $state = 'next' } else { $state = 'end' }
   }
-  $state -eq 'end' -and $text.Substring($at) -match '^[ \t\n\r]*\z'
+  if (-not ($state -eq 'end' -and $text.Substring($at) -match '^[ \t\n\r]*\z')) { return $null }
+  @{ fields = $fields }
+}
+
+function Test-JsonText([string]$text) { $null -ne (Read-JsonText $text) }
+
+# The top object's string field, by its exact key, or $null (no such field, another type, or no JSON object).
+function Get-TopText($r, [string]$name) {
+  if ($null -ne $r.fields -and $r.fields.ContainsKey($name) -and $r.fields[$name] -is [string]) { return $r.fields[$name] }
+  $null
 }
 
 function Invoke-OAuth($ctx, [string]$path, $form) {
@@ -1074,7 +1124,10 @@ function Get-ApiTarget($ctx, [string]$p) {
 function Test-Exempt([string]$method, [string]$path) { $method -ceq 'GET' -and ($path -ceq $AccessPath -or $path -ceq $EndpointsPath) }
 
 # The usable part of a listing answer, or $null when it is not a list with a valid revision.
-function ConvertTo-KindList($data) {
+function ConvertTo-KindList($r) {
+  # The top level must be an object with these exact keys (ConvertFrom-Json in PowerShell 7 unwraps a top array).
+  if ($null -eq (Get-TopText $r 'revision') -or $null -eq $r.fields -or -not $r.fields.ContainsKey('endpoints')) { return $null }
+  $data = $r.json
   if (-not (Test-Object $data) -or -not $data.PSObject.Properties['endpoints'] -or -not $data.PSObject.Properties['revision']) { return $null }
   if ($data.endpoints -isnot [array] -or $data.revision -isnot [string] -or $data.revision -cnotmatch $RevisionPattern) { return $null }
   $entries = New-Object System.Collections.Generic.List[object]
@@ -1134,7 +1187,7 @@ function Get-FreshKinds($ctx) {
     throw
   }
   $list = $null
-  if ($r.status -eq 200) { $list = ConvertTo-KindList $r.json }
+  if ($r.status -eq 200) { $list = ConvertTo-KindList $r }
   if ($null -eq $list) { Fail 'endpoints_unavailable' $Unavailable }
   Save-Kinds $ctx $generation $list
   $list
@@ -1154,20 +1207,24 @@ function Test-TemplateMatch([string]$template, [string]$path) {
   $t.Count -eq $s.Count
 }
 
-# 'read', 'act', or $null when the list does not hold the call. Any act entry that matches wins.
+# 'read', 'act', 'both' (a read and an act both match the path, such as /api/items/export and /api/items/{id}), or
+# $null when the list does not hold the call.
 function Find-Kind($list, [string]$method, [string]$path) {
-  $hit = $false; $act = $false
+  $read = $false; $act = $false
   foreach ($e in $list.entries) {
-    if ($e.method -ceq $method -and (Test-TemplateMatch $e.template $path)) { $hit = $true; if ($e.kind -ceq 'act') { $act = $true } }
+    if ($e.method -ceq $method -and (Test-TemplateMatch $e.template $path)) { if ($e.kind -ceq 'act') { $act = $true } else { $read = $true } }
   }
-  if (-not $hit) { return $null }
-  if ($act) { 'act' } else { 'read' }
+  if ($read -and $act) { return 'both' }
+  if ($act) { return 'act' }
+  if ($read) { return 'read' }
+  $null
 }
 
 # How a call is sent: its kind, and the revision of the list it was classified with. A path the list does not hold is
-# not sent (bad_path), after the list was fetched again in case it changed.
+# not sent (bad_path), after the list was fetched again in case it changed. A path that a read and an act both match
+# goes as an act first (both: Send-Api may send it once more as a read).
 function Get-CallPlan($ctx, [string]$method, [string]$path) {
-  if (Test-Exempt $method $path) { return @{ kind = 'read'; revision = ''; path = $path } }
+  if (Test-Exempt $method $path) { return @{ kind = 'read'; revision = ''; path = $path; both = $false } }
   $rec = Read-Record $ctx
   $list = $null
   if ($rec -and $rec.refreshToken) { $list = Read-Kinds $ctx $rec }
@@ -1175,21 +1232,25 @@ function Get-CallPlan($ctx, [string]$method, [string]$path) {
   while ($true) {
     if ($null -eq $list) { $list = Get-FreshKinds $ctx; $fresh = $true }
     $kind = Find-Kind $list $method $path
-    if ($kind) { return @{ kind = $kind; revision = $list.revision; path = $path } }
+    if ($kind -eq 'both') { return @{ kind = 'act'; revision = $list.revision; path = $path; both = $true } }
+    if ($kind) { return @{ kind = $kind; revision = $list.revision; path = $path; both = $false } }
     if ($fresh) { Fail 'bad_path' $NotListed }
     $list = $null
   }
 }
 
-# The three refusals the server makes before any route code runs. Nothing ran, so the call may go again.
+# The three refusals the server makes before any route code runs. Nothing ran, so the call may go again. The markers
+# are read as JSON.parse reads them: the top object's exact key error with a string value (Get-TopText).
 function Test-TokenRefused($r) { $r.status -eq 401 -and $r.challenge.Contains('error="invalid_token"') }
-function Test-BusyRefused($r) { $r.status -eq 429 -and (Get-Field $r 'error') -ceq 'busy' }
-function Test-PolicyRefused($r) { $r.status -eq 409 -and (Get-Field $r 'error') -ceq 'policy_changed' }
+function Test-BusyRefused($r) { $r.status -eq 429 -and (Get-TopText $r 'error') -ceq 'busy' }
+function Test-PolicyRefused($r) { $r.status -eq 409 -and (Get-TopText $r 'error') -ceq 'policy_changed' }
 
 # One API call with its retries, each at most once: after a 401 with the invalid_token challenge, a refresh and the
 # call again; after a 429 busy, a wait and the call again; after a 409 policy_changed, the list again and the call
-# again under its new kind. Any other answer is the answer. For a read, one retry after a network failure; an act is
-# never sent again once it may have reached the server.
+# again under its new kind. A path that a read and an act both match went as an act; when the list read again still
+# has both for it, it goes once more as a read (the router picked the read route). Every one of these follows a
+# refusal made before any route code ran. Any other answer is the answer. For a read, one retry after a network
+# failure; an act is never sent again once it may have reached the server.
 function Send-Api($ctx, [string]$method, [string]$url, $json, $call) {
   $token = Get-AccessToken $ctx ''
   $refreshed = $false; $busyRetried = $false; $netRetried = $false; $policyRetried = $false
@@ -1218,6 +1279,7 @@ function Send-Api($ctx, [string]$method, [string]$url, $json, $call) {
       $list = Get-FreshKinds $ctx
       $kind = Find-Kind $list $method $call.path
       if (-not $kind) { Fail 'bad_path' $NotListed }
+      if ($kind -eq 'both') { if ($call.both) { $kind = 'read' } else { $kind = 'act' } }
       $call.kind = $kind
       $call.revision = $list.revision
       continue
@@ -1235,11 +1297,11 @@ function Get-DataText($r) {
   ConvertTo-JsonString $r.text
 }
 
-function Test-FailedAnswer($data) {
-  if (-not (Test-Object $data)) { return $false }
-  if ($data.PSObject.Properties['success'] -and $data.success -is [bool] -and -not $data.success) { return $true }
-  if ($data.PSObject.Properties['status'] -and $data.status -is [string] -and $data.status -ceq 'error') { return $true }
-  $false
+# Whether an answer says it failed: its top object's own "success": false, or "status": "error", by their exact keys.
+function Test-FailedAnswer($r) {
+  if ($null -eq $r.fields) { return $false }
+  if ($r.fields.ContainsKey('success') -and $r.fields['success'] -is [bool] -and -not $r.fields['success']) { return $true }
+  (Get-TopText $r 'status') -ceq 'error'
 }
 
 function Invoke-Api($ctx, [string]$method, [string]$p, $json) {
@@ -1251,9 +1313,9 @@ function Invoke-Api($ctx, [string]$method, [string]$p, $json) {
   $call = Get-CallPlan $ctx $method $target.path
   $r = Send-Api $ctx $method $target.url $json $call
   if ($r.status -ge 200 -and $r.status -lt 300) {
-    if ($listing) { $list = ConvertTo-KindList $r.json; if ($null -ne $list) { Save-Kinds $ctx $generation $list } }
+    if ($listing) { $list = ConvertTo-KindList $r; if ($null -ne $list) { Save-Kinds $ctx $generation $list } }
     $data = Get-DataText $r
-    if (Test-FailedAnswer $r.json) {
+    if (Test-FailedAnswer $r) {
       Write-Line ('{"error":"failed","message":' + (ConvertTo-JsonString "$method $p answered that it failed.") + ',"status":' + $r.status + ',"data":' + $data + '}')
       $script:ExitCode = 1
       return
@@ -1262,8 +1324,9 @@ function Invoke-Api($ctx, [string]$method, [string]$p, $json) {
     return
   }
   # The server's own refusals for agents carry a code and a message: passed on as they are.
-  $code = Get-Field $r 'error'; $message = Get-Field $r 'message'
-  if ($code -cmatch '^[a-z_]{1,40}\z' -and (Test-Object $r.json) -and $r.json.PSObject.Properties['message'] -and $r.json.message -is [string]) {
+  # Exact keys and string values, read from the document's structure, as the other versions read them.
+  $code = Get-TopText $r 'error'; $message = Get-TopText $r 'message'
+  if ($code -cmatch '^[a-z_]{1,40}\z' -and $null -ne $message) {
     $f = [ClientFail]::new($code, $message); $f.Status = $r.status; throw $f
   }
   throw (New-HttpFail $r "$method $p")

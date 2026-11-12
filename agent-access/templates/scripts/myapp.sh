@@ -82,7 +82,7 @@ RESP="" RESP_JSON=0
 FAIL_STATUS=""
 # The call being sent (api_send): its kind, the revision of the list it was classified with (empty: exempt), its
 # path, and whether each retry was used. SOFT=1 makes a failed request return instead of stopping (the listing).
-KIND=read REVISION="" CALL_PATH="" SOFT=0
+KIND=read REVISION="" CALL_PATH="" BOTH=0 SOFT=0
 s_ref=0 s_busy=0 s_net=0 s_pol=0
 
 now() { date +%s; }
@@ -1065,15 +1065,19 @@ api_call() {
 
 # The three refusals the server makes before any route code runs. Nothing ran, so the call may go again.
 token_refused() { [ "$STATUS" = 401 ] && grep -i '^www-authenticate:' "$HDRS" 2>/dev/null | grep -q 'error="invalid_token"'; }
-# Only the top object's error counts: jstr would also find one nested in a route's own answer.
+# Only the top object's own key error, exactly, with a string value counts (json_scan top): jstr would also find one
+# nested in a route's own answer, or under another key case.
 busy_refused() { [ "$STATUS" = 429 ] && [ "$(json_scan top "$RESP" error)" = busy ]; }
 policy_refused() { [ "$STATUS" = 409 ] && [ "$(json_scan top "$RESP" error)" = policy_changed ]; }
 
 # api_send METHOD URL BODYFILE: one API call with its retries, each at most once: after a 401 with the invalid_token
 # challenge, a refresh and the call again; after a 429 busy, a wait and the call again; after a 409 policy_changed,
-# the list again and the call again under its new kind. Any other answer is the answer. For a read, one retry after
-# a network failure; an act is never sent again once it may have reached the server. The call is KIND, REVISION and
-# CALL_PATH; sh has no local variables, so kinds_fetch keeps this loop's state around its own call.
+# the list again and the call again under its new kind. A path that a read and an act both match went as an act
+# (BOTH=1); when the list read again still has both for it, it goes once more as a read (the router picked the read
+# route). Every one of these follows a refusal made before any route code ran. Any other answer is the answer. For a
+# read, one retry after a network failure; an act is never sent again once it may have reached the server. The call
+# is KIND, REVISION, CALL_PATH and BOTH; sh has no local variables, so kinds_fetch keeps this loop's state around its
+# own call (its listing never reaches the policy_changed branch, so BOTH stays as it is).
 api_send() {
   access_token
   s_ref=0 s_busy=0 s_net=0 s_pol=0
@@ -1110,6 +1114,10 @@ api_send() {
       k=$(kinds_lookup "$LISTF" "$1" "$CALL_PATH" "$LISTGEN")
       case "$k" in
         "read "* | "act "*) KIND=${k%% *} REVISION=${k#* } ;;
+        "both "*)
+          KIND=act REVISION=${k#* }
+          [ "$BOTH" = 1 ] && KIND=read
+          ;;
         *) fail bad_path "$NOT_LISTED" ;;
       esac
       continue
@@ -1125,8 +1133,9 @@ api_send() {
 # Kinds: whether a call is a read or an act, from the server's own list of this connection's calls, kept with the
 # list's revision for the current connection only. Access and the listing itself are reads, exempt from the list.
 
-# kinds_lookup FILE METHOD PATH GENERATION: prints "read REVISION", "act REVISION", none (the list does not hold the
-# call) or stale (no usable list). Kind and revision come from one read of the file.
+# kinds_lookup FILE METHOD PATH GENERATION: prints "read REVISION", "act REVISION", "both REVISION" (a read and an act
+# both match the path, such as /api/items/export and /api/items/{id}), none (the list does not hold the call) or stale
+# (no usable list). Kind and revision come from one read of the file.
 kinds_lookup() {
   [ -f "$1" ] || {
     printf 'stale'
@@ -1155,9 +1164,15 @@ NR == 1 {
   next
 }
 NF == 3 && $1 == m && $2 ~ tre && ($3 == "read" || $3 == "act") {
-  if (match_t($2, p)) { hit = 1; if ($3 == "act") act = 1 }
+  if (match_t($2, p)) { if ($3 == "act") act = 1; else read = 1 }
 }
-END { if (bad || NR == 0) printf "stale"; else if (!hit) printf "none"; else if (act) printf "act %s", rev; else printf "read %s", rev }' "$1"
+END {
+  if (bad || NR == 0) printf "stale"
+  else if (act && read) printf "both %s", rev
+  else if (act) printf "act %s", rev
+  else if (read) printf "read %s", rev
+  else printf "none"
+}' "$1"
 }
 
 # kinds_build ANSWERFILE GENERATION: the list of a listing answer, in the kinds format, into a private temp file
@@ -1202,8 +1217,9 @@ kinds_fetch() {
   kinds_store "$LISTGEN"
 }
 
-# kind_of METHOD PATH: sets KIND and REVISION. A path the server's list does not hold is not sent (bad_path), after
-# the list was fetched again in case it changed.
+# kind_of METHOD PATH: sets KIND, REVISION and BOTH. A path the server's list does not hold is not sent (bad_path),
+# after the list was fetched again in case it changed. A path that a read and an act both match goes as an act first
+# (BOTH=1: api_send may send it once more as a read).
 kind_of() {
   if [ "$1" = GET ]; then
     case "$2" in "$ACCESS_PATH" | "$ENDPOINTS_PATH")
@@ -1220,8 +1236,10 @@ kind_of() {
     kinds_fetch
     k=$(kinds_lookup "$LISTF" "$1" "$2" "$LISTGEN")
   fi
+  BOTH=0
   case "$k" in
     "read "* | "act "*) KIND=${k%% *} REVISION=${k#* } ;;
+    "both "*) KIND=act REVISION=${k#* } BOTH=1 ;;
     *) fail bad_path "$NOT_LISTED" ;;
   esac
 }

@@ -601,6 +601,10 @@ for (const impl of impls) {
         '{"endpoints":[]}',
         '{"endpoints":[],"revision":"not valid!"}',
         '{"items":[{"method":"GET","path":"/api/items","kind":"read"}],"revision":"abc"}',
+        // A whole listing wrapped in a top array is not a listing (PowerShell 7 unwraps it if read loosely).
+        '[{"endpoints":[{"method":"GET","path":"/api/items","kind":"read"}],"revision":"abc"}]',
+        // Keys in another letter case are other keys.
+        '{"Endpoints":[{"method":"GET","path":"/api/items","kind":"read"}],"Revision":"abc"}',
       ]) {
         server.listingBody = garbage
         const g = await run(impl, inst, server, ["get", "/api/items"])
@@ -771,6 +775,125 @@ for (const impl of impls) {
       const act = await run(impl, inst, server, ["get", "/api/items"])
       assert.equal(act.json?.error, "outcome_unknown", act.out + act.err)
       assert.equal(server.arrivals("GET", "/api/items"), 1, "an act is not sent again")
+    })
+
+    it("reads busy and policy_changed only as a string under the exact key error of a top object", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      // After an act ran: another key case, a value that is not a string, or a top array is no refusal marker.
+      let runs = 0
+      for (const [status, body] of [
+        [429, '{"Error":"busy"}'],
+        [429, '{"ERROR":"busy"}'],
+        [429, '{"error":["busy"]}'],
+        [429, '{"error":{"busy":true}}'],
+        [429, '[{"error":"busy"}]'],
+        [429, '{"error":"busy","error":["busy"]}'],
+        [409, '{"ERROR":"policy_changed"}'],
+        [409, '{"Error":"policy_changed"}'],
+        [409, '{"error":["policy_changed"]}'],
+        [409, '[{"error":"policy_changed"}]'],
+      ]) {
+        server.afterRun.push({ status, body })
+        const r = await run(impl, inst, server, ["post", "/api/items/7/archive"])
+        runs++
+        assert.equal(r.json?.error, `http_${status}`, `${body}: ${r.out}${r.err}`)
+        assert.equal(r.code, 1, `${body}: ${r.out}${r.err}`)
+        assert.equal(server.runs("POST", "/api/items/{id}/archive"), runs, `${body}: ran once`)
+        assert.equal(server.arrivals("POST", "/api/items/7/archive"), runs, `${body}: sent once`)
+      }
+      // Before the route: the marker counts as JSON.parse reads it, escapes and all, beside keys of any shape.
+      let sent = 0
+      for (const body of ['{"error":"busy","":"x"}', '{"error":"busy","Error":"x"}', '{"\\u0065rror":"bus\\u0079"}']) {
+        server.beforeRun.push({ status: 429, body })
+        const r = await run(impl, inst, server, ["post", "/api/items/9/archive"])
+        runs++
+        sent += 2
+        assert.equal(r.code, 0, `${body}: ${r.out}${r.err}`)
+        assert.equal(server.runs("POST", "/api/items/{id}/archive"), runs, `${body}: ran once`)
+        assert.equal(server.arrivals("POST", "/api/items/9/archive"), sent, `${body}: sent again once`)
+      }
+    })
+
+    it("reads an application failure from any valid JSON answer, and prints the answer as data", async () => {
+      const inst = fresh()
+      await listed(impl, inst, server)
+      for (const body of [
+        '{"success":false,"":"note"}',
+        '{"status":"error","data":{"a":1,"A":2}}',
+        '{"success":false,"size":1e400}',
+      ]) {
+        server.afterRun.push({ status: 200, body })
+        const r = await run(impl, inst, server, ["get", "/api/items/7"])
+        assert.equal(r.json?.error, "failed", `${body}: ${r.out}${r.err}`)
+        assert.equal(r.code, 1, `${body}: ${r.out}${r.err}`)
+        assert.equal(r.json.status, 200, body)
+        assert.deepEqual(r.json.data, JSON.parse(body), body)
+      }
+      // Only a top object's own success false or status "error" says so.
+      for (const body of [
+        '{"data":{"success":false}}',
+        '{"success":"false"}',
+        '{"Success":false}',
+        '{"Status":"error"}',
+        '[{"success":false}]',
+        '{"status":"error","status":"ok"}',
+      ]) {
+        server.afterRun.push({ status: 200, body })
+        const r = await run(impl, inst, server, ["get", "/api/items/7"])
+        assert.equal(r.code, 0, `${body}: ${r.out}${r.err}`)
+        assert.deepEqual(r.json?.data, JSON.parse(body), body)
+      }
+    })
+
+    // A read and an act that both match one path: the static read /api/items/export and the act /api/items/{id}.
+    const overlapping = () => {
+      server.setKind("GET", "/api/items/{id}", "act")
+      server.policy.unshift({ method: "GET", path: "/api/items/export", kind: "read", area: "items", description: "" })
+    }
+
+    it("sends a path that a read and an act both match as a read after the act was refused, when the router picks the read", async () => {
+      const inst = fresh()
+      overlapping()
+      server.routePreference = "static"
+      await listed(impl, inst, server)
+      const r = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(r.code, 0, r.out + r.err)
+      assert.equal(r.json?.data?.kind, "read")
+      assert.equal(server.runs("GET", "/api/items/export"), 1, "the read ran once")
+      assert.equal(server.runs("GET", "/api/items/{id}"), 0, "the act never ran")
+      assert.equal(server.arrivals("GET", "/api/items/export"), 2, "the refused act and the read")
+      // A further policy_changed ends the command, and nothing runs.
+      server.beforeRun.push("policy_changed", "policy_changed")
+      const twice = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(twice.json?.error, "policy_changed", twice.out + twice.err)
+      assert.equal(server.arrivals("GET", "/api/items/export"), 4)
+      assert.equal(server.runs("GET", "/api/items/export"), 1)
+      // From a list read for the call (none kept) too.
+      for (const f of fs.readdirSync(inst.creds)) if (f.endsWith(".kinds")) fs.rmSync(path.join(inst.creds, f))
+      const fetched = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(fetched.code, 0, fetched.out + fetched.err)
+      assert.equal(server.runs("GET", "/api/items/export"), 2)
+      assert.equal(server.runs("GET", "/api/items/{id}"), 0, "the act never ran")
+    })
+
+    it("sends a path that a read and an act both match as an act, once, when the router picks the act", async () => {
+      const inst = fresh()
+      overlapping()
+      server.routePreference = "dynamic"
+      await listed(impl, inst, server)
+      const r = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(r.code, 0, r.out + r.err)
+      assert.equal(r.json?.data?.kind, "act")
+      assert.equal(server.runs("GET", "/api/items/{id}"), 1, "the act ran once")
+      assert.equal(server.arrivals("GET", "/api/items/export"), 1, "sent once")
+      // Its answer is lost: the outcome is unknown, and it is not sent again.
+      server.afterRun.push("drop")
+      const lost = await run(impl, inst, server, ["get", "/api/items/export"])
+      assert.equal(lost.json?.error, "outcome_unknown", lost.out + lost.err)
+      assert.equal(server.runs("GET", "/api/items/{id}"), 2, "the act ran once more, for the second command only")
+      assert.equal(server.arrivals("GET", "/api/items/export"), 2, "sent once")
+      assert.equal(server.runs("GET", "/api/items/export"), 0, "the read never ran")
     })
 
     it("refreshes and sends again once after the token refusal", async () => {
@@ -1401,6 +1524,26 @@ describe(`${NAME} fake server policy check`, () => {
     assert.equal(server.runs("GET", "/api/items/export"), 1)
     assert.equal((await call("GET", "/api/items/7;v=1", read)).status, 200)
     assert.equal(server.runs("GET", "/api/items/{id}"), 1)
+  })
+
+  it("picks the first, the static or the dynamic one of two routes that match a path, as set", async () => {
+    server.reset()
+    server.setKind("GET", "/api/items/{id}", "act")
+    server.policy.push({ method: "GET", path: "/api/items/export", kind: "read", area: "items", description: "" })
+    const rev = server.revision()
+    const read = { [POLICY_HEADER]: rev, [KIND_HEADER]: "read" }
+    const act = { [POLICY_HEADER]: rev, [KIND_HEADER]: "act" }
+    // The table holds /api/items/{id} first.
+    refused(await call("GET", "/api/items/export", read), "first: the act")
+    assert.equal((await call("GET", "/api/items/export", act)).json?.kind, "act")
+    server.routePreference = "static"
+    refused(await call("GET", "/api/items/export", act), "static: the read")
+    assert.equal((await call("GET", "/api/items/export", read)).json?.kind, "read")
+    server.routePreference = "dynamic"
+    refused(await call("GET", "/api/items/export", read), "dynamic: the act")
+    assert.equal((await call("GET", "/api/items/export", act)).json?.kind, "act")
+    assert.equal(server.runs("GET", "/api/items/export"), 1)
+    assert.equal(server.runs("GET", "/api/items/{id}"), 2)
   })
 })
 

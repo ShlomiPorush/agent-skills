@@ -15,7 +15,7 @@ The placeholder product is `myapp`. Rename it and set the product constants befo
 | `scripts/myapp.ps1` | The Windows PowerShell 5.1+ and PowerShell 7 version. It runs `myapp.mjs` when Node 20+ is installed. |
 | `scripts/myapp.sh` | The POSIX sh version. It needs only `sh`, `curl` and `awk`. |
 | `client-skill.md` | The product's `SKILL.md` template (named so that it is never loaded as a skill of this repository). |
-| `test/fake-server.mjs` | A strict stand-in for the product's authorization server and REST API. Like many real servers, it decodes the path before it routes it. Switches make its router match in any case or drop `;` parameters. |
+| `test/fake-server.mjs` | A strict stand-in for the product's authorization server and REST API. Like many real servers, it decodes the path before it routes it. Switches make its router match in any case, drop `;` parameters, or pick the static or the dynamic one of two routes that match a path. |
 | `test/contract.test.mjs` | The contract suite. It runs against every version the computer can run. |
 | `test/package.json` | Runs the suite with `npm test`. |
 | `ci/skill-contract.yml` | An example GitHub Actions job for the product: Windows (node, ps, pwsh) and macOS (node, sh). |
@@ -97,21 +97,28 @@ not filled in.
   server knows which route it picked: a router that matches in any case (the ASP.NET Core default) runs
   `/api/items/export` for `/api/items/EXPORT`, and one that drops `;` parameters (Spring, Tomcat) runs it for
   `/api/items/export;x`, while the client matched the read `/api/items/{id}` for both. A refused call never ran, so
-  the client may send it again. When the list holds two routes that both match one path with different kinds, the
-  client sends `act` (an act wins); a server that picks the read route then refuses that path every time, which is
-  safe. Avoid such overlapping routes.
+  the client may send it again.
+- Overlapping routes are allowed. When the list holds a read and an act that both match one path (the static read
+  `/api/items/export` and the act `/api/items/{id}`), only the server's router knows which one runs. The client
+  sends the call as `act` first. If the server refuses it with `policy_changed` and the list read again still holds
+  both kinds for the path, the client sends it once more as `read`. This is safe: if the router had picked the act,
+  the `act` declaration would have matched and run, and the client never sends an act again after that. A
+  `policy_changed` in answer to the `read` ends the command.
 - Exactly three refusals before any route code runs, and no route answers an agent with any of them:
   - 401 with `WWW-Authenticate` that contains `error="invalid_token"`. The client refreshes the token and sends the
     call once more.
   - 429 with the JSON body `{"error": "busy"}`. The client waits and sends the call once more.
   - 409 with the JSON body `{"error": "policy_changed"}`. The client reads the list again and sends the call once
-    more under its new kind. A second `policy_changed` in a row ends the command. When the path names another
-    route on the server than in the list, the list read again says the same, so the second refusal ends the
-    command and the route never runs.
+    more under its new kind (for a path that a read and an act both match, as `read`; see above). A second
+    `policy_changed` in a row ends the command. When the path names another route on the server than in the list,
+    the list read again says the same, so the second refusal ends the command and the route never runs.
 
   Any other 401, 429 or 409 is passed back to the agent as an error, and the call is not sent again. The client
   reads the `busy` and `policy_changed` markers only from a body that is one complete, strict JSON value (see
-  below), so a body that broke off or is not strict JSON never counts as one of these refusals.
+  below), so a body that broke off or is not strict JSON never counts as one of these refusals. The marker counts
+  only when that value is an object whose own key `error`, exactly in lower case, holds the string `busy` or
+  `policy_changed`, as `JSON.parse` reads it (escapes read, the last of two equal keys wins). `{"Error": "busy"}`,
+  `{"error": ["busy"]}` and `[{"error": "busy"}]` are not refusals.
 - Refusals for agents as JSON `{"error": "<code>", "message": "<text>"}` with a lowercase code. The client passes
   them on as they are.
 
@@ -137,10 +144,16 @@ show:
   nothing after it but whitespace, exactly as `JSON.parse` reads it (no single quotes, names without quotes,
   comments, trailing commas, `NaN`, leading zeros, byte order mark or raw control characters). A body that is not is
   `bad_body`, and nothing is sent. A key given twice counts as `JSON.parse` reads it: the last value wins. The sh
-  version checks this in `json_scan`, and the PowerShell version in `Test-JsonText` before `ConvertFrom-Json`, which
-  alone takes more. Valid JSON that `ConvertFrom-Json` cannot hold (an empty key, two keys that differ only in case,
-  or in Windows PowerShell a number beyond the double range) reads as no JSON in the PowerShell version only. That
-  fails closed: no refusal marker and no list is taken from it.
+  version checks this in `json_scan`, and the PowerShell version in `Read-JsonText`, never in `ConvertFrom-Json`
+  alone, which takes more.
+- The markers in an answer (`busy`, `policy_changed`, and the failure markers `"success": false` and
+  `"status": "error"`) come from the top object's own fields, by their exact keys and JSON types. The sh version
+  reads them with `json_scan`, and the PowerShell version from the fields that `Read-JsonText` returns, never from
+  `ConvertFrom-Json`, which matches keys in any case, turns other values into strings, unrolls a top array in
+  PowerShell 7, and cannot hold some valid JSON (an empty key, two keys that differ only in case, or in Windows
+  PowerShell a number beyond the double range). Such JSON is still JSON in every version: it is printed as data,
+  and its markers count. Only the list of allowed calls is still read with `ConvertFrom-Json` in the PowerShell
+  version, so a listing that `ConvertFrom-Json` cannot hold is no list there. That fails closed.
 - The refresh protocol: the access token is reused until a minute before it runs out; a refresh runs under the lock
   with `refreshStartedAt` stored first; a refresh that may still be in flight is never sent again; a refresh whose
   answer was lost is retried once; two lost refresh answers end the connection.

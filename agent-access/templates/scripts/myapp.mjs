@@ -1047,7 +1047,7 @@ async function fetchKinds(ctx) {
   const generation = readRecord(ctx)?.generation ?? ""
   let r
   try {
-    r = await send(ctx, "GET", `${ctx.issuer}${ENDPOINTS}`, undefined, { kind: "read", revision: "" })
+    r = await send(ctx, "GET", `${ctx.issuer}${ENDPOINTS}`, undefined, { kind: "read", revision: "", both: false })
   } catch (e) {
     if (e.extra?.api) throw new Fail("endpoints_unavailable", UNAVAILABLE)
     throw e
@@ -1071,19 +1071,25 @@ function templateMatches(template, p) {
   return t.length === s.length
 }
 
-/** "read", "act", or null when the list does not hold the call. Any act entry that matches wins. */
+/**
+ * "read", "act", "both" (a read and an act both match the path, such as /api/items/export and /api/items/{id}), or
+ * null when the list does not hold the call.
+ */
 function lookup(list, method, p) {
   const hits = list.entries.filter((e) => e.method === method && templateMatches(e.template, p))
-  if (!hits.length) return null
-  return hits.some((e) => e.kind === "act") ? "act" : "read"
+  const act = hits.some((e) => e.kind === "act")
+  const read = hits.some((e) => e.kind !== "act")
+  if (act && read) return "both"
+  return act ? "act" : read ? "read" : null
 }
 
 /**
  * How a call is sent: its kind, and the revision of the list it was classified with. A path the list does not hold
- * is not sent (bad_path), after the list was fetched again in case it changed.
+ * is not sent (bad_path), after the list was fetched again in case it changed. A path that a read and an act both
+ * match goes as an act first (both: send may send it once more as a read).
  */
 async function classify(ctx, method, p) {
-  if (exempt(method, p)) return { kind: "read", revision: "", path: p }
+  if (exempt(method, p)) return { kind: "read", revision: "", path: p, both: false }
   const rec = readRecord(ctx)
   let list = rec?.refreshToken ? readKinds(ctx, rec) : null
   let fresh = false
@@ -1093,22 +1099,33 @@ async function classify(ctx, method, p) {
       fresh = true
     }
     const kind = lookup(list, method, p)
-    if (kind) return { kind, revision: list.revision, path: p }
+    if (kind === "both") return { kind: "act", revision: list.revision, path: p, both: true }
+    if (kind) return { kind, revision: list.revision, path: p, both: false }
     if (fresh) throw new Fail("bad_path", NOT_LISTED)
     list = null
   }
 }
 
-// The three refusals the server makes before any route code runs. Nothing ran, so the call may go again.
+/** The top object's own field `key` when it is a string (as JSON.parse reads the answer), else undefined. */
+function topText(r, key) {
+  const body = r.json
+  if (body === null || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, key)) return undefined
+  return typeof body[key] === "string" ? body[key] : undefined
+}
+
+// The three refusals the server makes before any route code runs. Nothing ran, so the call may go again. The markers
+// count only as the top object's exact key error with a string value.
 const tokenRefused = (r) => r.status === 401 && r.challenge.includes('error="invalid_token"')
-const busyRefused = (r) => r.status === 429 && r.json?.error === "busy"
-const policyRefused = (r) => r.status === 409 && r.json?.error === "policy_changed"
+const busyRefused = (r) => r.status === 429 && topText(r, "error") === "busy"
+const policyRefused = (r) => r.status === 409 && topText(r, "error") === "policy_changed"
 
 /**
  * One API call with its retries, each at most once: after a 401 with the invalid_token challenge, a refresh and the
  * call again; after a 429 busy, a wait and the call again; after a 409 policy_changed, the list again and the call
- * again under its new kind. Any other answer is the answer. For a read, one retry after a network failure; an act
- * is never sent again once it may have reached the server.
+ * again under its new kind. A path that a read and an act both match went as an act; when the list read again still
+ * has both for it, it goes once more as a read (the router picked the read route). Every one of these follows a
+ * refusal made before any route code ran. Any other answer is the answer. For a read, one retry after a network
+ * failure; an act is never sent again once it may have reached the server.
  */
 async function send(ctx, method, url, json, call) {
   let token = await accessToken(ctx)
@@ -1153,7 +1170,7 @@ async function send(ctx, method, url, json, call) {
       const list = await fetchKinds(ctx)
       const kind = lookup(list, method, call.path)
       if (!kind) throw new Fail("bad_path", NOT_LISTED)
-      call.kind = kind
+      call.kind = kind === "both" ? (call.both ? "read" : "act") : kind
       call.revision = list.revision
       continue
     }

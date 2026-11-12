@@ -88,6 +88,9 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       // runs /api/items/export). Either way it can pick another route than the client matched.
       caseInsensitiveRoutes: false,
       stripPathParameters: false,
+      // Which of two routes that both match a path the router picks: "first" (the first in the table), "static" (the
+      // one with fewer {...} parts, as most routers do: /api/items/export before /api/items/{id}) or "dynamic".
+      routePreference: "first",
       policy: SAMPLE_POLICY.map((e) => ({ ...e })),
       last: {},
     })
@@ -280,9 +283,13 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       const declared = req.headers[KIND_HEADER]
       if (before === "policy_changed" || req.headers[POLICY_HEADER] !== s.revision()) return changed()
       if (declared !== "read" && declared !== "act") return changed()
-      const rule = s.policy.find(
+      const params = (e) => (e.path.match(/\{/g) ?? []).length
+      const matches = s.policy.filter(
         (e) => e.method === req.method && templateMatches(e.path, routed, s.caseInsensitiveRoutes),
       )
+      if (s.routePreference === "static") matches.sort((x, y) => params(x) - params(y))
+      if (s.routePreference === "dynamic") matches.sort((x, y) => params(y) - params(x))
+      const rule = matches[0]
       if (!rule) return send(404, { error: "not_found", message: "No such call." })
       if (rule.kind !== declared) return changed()
 
