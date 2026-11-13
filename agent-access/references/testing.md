@@ -40,7 +40,7 @@ When the policy headers become required, existing API tests break. A test helper
 
 - Only a signed-in person approves: a bearer, an API key, another person, the same person after signing in again, all refused.
 - CSRF: a POST with a foreign `Origin`, no `Origin`, a form content type, all refused. The issuer's origin as a browser spells it is accepted, and a public URL that a browser would spell differently is refused in the settings.
-- An area not offered, or not asked for, is never granted.
+- An area not offered, or not asked for, is never granted, also when the person's permissions grew after the page was shown.
 - A person cannot list or disconnect another person's connection (404).
 - Disconnect all also ends waiting codes, device requests and pending approvals.
 - The settings: turning agents off ends every connection. A locked switch says why.
@@ -64,13 +64,13 @@ Also run two refreshes with the same token at once (one wins, the grant ends, an
 
 Keep the suite outside the skill's folder when that folder is installed from Git as it is, and point the suite at the scripts.
 
-When the client replaces an existing one, add upgrade cases that start from files the old client wrote: its connection record, its cached endpoints list, a device flow still waiting, and a refresh that was cut off. Each must work or be fetched again, without a new approval.
+When the client replaces an existing one, add upgrade cases that start from files the old client wrote: its connection record, its cached endpoints list, a device flow still waiting, and a refresh that was cut off. The record, the cached list and the waiting device flow keep working or are fetched again, without a new approval. A refresh that was cut off follows the usual rules: when the server had already spent the token, the grant ends and the person approves again.
 
 Check the sh version with `shellcheck` and `shfmt` in CI.
 
 Run it in CI on the platforms where each version runs: Windows with Node, Windows PowerShell 5.1 and PowerShell 7; macOS with Node and sh; Linux with Node and sh in the product's main checks. `templates/ci/skill-contract.yml` is an example job.
 
-Windows and macOS minutes cost money in a private repository, and the Windows run is long. The CI shape is Shlomi's decision ("Ask Shlomi" in `SKILL.md`). One shape that works: run the suite only when the client or the job changes. The change check fails closed (it runs the suite when it cannot tell), uses `git diff --no-renames` so a moved file counts, and watches the workflow file itself.
+Windows and macOS minutes cost money in a private repository, and the Windows run is long. The CI shape is Shlomi's decision ("Ask Shlomi" in `SKILL.md`). One shape that works: run the suite only when the client or the job changes. The change check fails closed (the jobs run unless the check succeeded and found no change), uses `git diff -z --no-renames` so a moved file or an unusual name counts, and watches the workflow file itself.
 
 When the product changes the command, add the case to the suite first and run it on all versions.
 

@@ -9,8 +9,9 @@
 #   the tests do not belong in an agent's copy. The suite finds the scripts through MYAPP_SCRIPTS_DIR.
 # - Which systems run the suite, and how often, is Shlomi's decision for each product. macOS minutes cost more in a
 #   private repository. The "changes" job runs the suite only when the scripts, the suite or this workflow change.
-#   A skipped job counts as passed for a required check, so the gate never blocks a pull request. Remove the gate
-#   to run the suite on every change.
+#   The checks are skipped only when the detection succeeded and found no such change. When the detection fails or
+#   gives no answer, they run. A skipped job counts as passed for a required check. Remove the gate to run the suite
+#   on every change.
 #
 # The workflow uses no secret: the fake server makes every token and code at run time.
 name: Skill contract
@@ -50,16 +51,16 @@ jobs:
           # Fails closed: any doubt runs the suite. --no-renames counts a moved file at its old and its new path.
           run=true
           wf=${WORKFLOW#*/*/}; wf=${wf%@*}
+          # -z keeps paths as they are: without it, Git quotes unusual names and they would not match.
+          changed="$RUNNER_TEMP/changed"
           if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] \
-            && files=$(git diff --no-renames --name-only "$BASE" "$HEAD" --); then
+            && git diff -z --no-renames --name-only "$BASE" "$HEAD" -- >"$changed"; then
             run=false
-            while IFS= read -r f; do
+            while IFS= read -r -d '' f; do
               case "$f" in
                 "$SKILL_SCRIPTS"/* | "$SUITE_DIR"/* | "$wf") run=true ;;
               esac
-            done <<EOF
-          $files
-          EOF
+            done <"$changed"
           fi
           echo "run=$run" >>"$GITHUB_OUTPUT"
           echo "Run the skill checks: $run"
@@ -67,7 +68,8 @@ jobs:
   lint:
     name: Skill lint
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    # Runs unless the detection succeeded and found no change: a failed detection runs the checks.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -88,7 +90,8 @@ jobs:
   skill:
     name: Skill (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    # Runs unless the detection succeeded and found no change: a failed detection runs the checks.
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run != 'false') }}
     strategy:
       fail-fast: false
       matrix:
