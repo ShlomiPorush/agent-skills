@@ -19,9 +19,9 @@ When the policy headers become required, existing API tests break. A test helper
 - CIMD: `client_id` mismatch, `http`, another port, an IP address, a host that resolves to a private address, a redirect, a slow answer, a large answer, a compressed answer, and a host the admin trusts for other integrations that resolves to a private address. Each refused with its fixed text.
 - Authorize: PKCE missing, `plain`, a short challenge. A redirect URI that differs in host, path or query. Loopback with another port accepted. Every problem shown in the browser, never redirected.
 - Device flow: polling too fast gets `slow_down`. A code collected twice ends the grant. An approved code collected just after it expires still works within the grace. Unknown codes count against the address.
-- Tokens: a token for `/mcp` refused on the REST API and the other way round. An expired access token refused. A refresh rotates. A reused refresh token ends the grant and its connection record. A device code presented again ends the grant, not only the call. Revoking an access token ends the grant.
+- Tokens: a token for `/mcp` refused on the REST API and the other way round. An expired access token refused. A refresh rotates. A reused refresh token ends the grant and its connection record. A device code presented again ends the grant, not only the call. Revoking an access token ends the grant. A connection inside its lifetime still works after the library's default lifetimes pass (advance the clock past them, for example 14 days for `oidc-provider` grants).
 - Hashes: the token store holds no token, code or device code value (search the stored rows for the issued values).
-- Identity changes: a request that changes the person's identity without being signed in as that person ends nothing.
+- Identity changes: an authorized change ends every connection of the person, also without the person's session (recovery, an admin, provisioning). A request not authorized to make the change ends nothing.
 - Ending: past its end, the connection ends for good, and a longer maximum later does not revive it. A deactivated person. A changed identity. A changed public URL, identity provider or sign-in client ends every connection, and changing it back revives none.
 
 ### Policy and channels
