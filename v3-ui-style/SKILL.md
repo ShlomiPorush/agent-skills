@@ -35,6 +35,7 @@ The design system of the [mailcow Logs Viewer](https://github.com/ShlomiPorush/m
   - Every hover style is gated by `@media (hover: hover)`; focus styles are not, and a tooltip that is the only way to read a value stays reachable by tap (MO-4).
   - There is no Refresh button: every page updates by itself at a pace that fits its data, and a refresh never redraws what the user works in and keeps their place when it does redraw (SV-10, SV-6, SV-13).
   - Every layer over the page is built by its shared builder (dialog, sheet, picker, menu, toast) or kept in the same frame when it lives in the HTML; exceptions are listed with a reason, and a guard test fails on any other. Where a layer has an X, it is the one shared X (DS-24).
+  - A picker or menu panel stays anchored to its button at every width (or inline in a filters column, MP-8); on a phone it never becomes a bottom sheet or a panel docked to a screen edge. Only dialogs become sheets (MP-5, DS-1).
   - Dates and times follow the Date Format and Time Format the user picks (by default the browser's date order and the 24-hour clock), always as numbers without month names, and go through one set of format helpers that a test keeps every page on (FW-9).
 - Two items are still open in v3 itself: results shown only in colour on some buttons, and a visual order that differs from the DOM order; and the Copy button on a selected log line, reached with a mouse only (LD-14). Build both right from the start.
 
@@ -55,7 +56,7 @@ All area files are in `references/behaviors/`.
 | FS | `FS-forms-settings-and-secrets.md` | a form, a settings page, a secret or password, sign in |
 | SV | `SV-saving-validation-and-refresh.md` | anything the user edits and saves, or data that refreshes |
 | SR | `SR-search.md` | a search box or a global search |
-| MP | `MP-menus-pickers-and-popovers.md` | a menu, dropdown, date or value picker, popover or tooltip |
+| MP | `MP-menus-pickers-and-popovers.md` | a list filter, a menu, dropdown, date or value picker, popover or tooltip |
 | NL | `NL-navigation-layout-and-routing.md` | a new page or tab, navigation, page state in the URL, Back and Forward |
 | LD | `LD-live-data-and-logs.md` | polling, live updates, logs |
 | FB | `FB-feedback-loading-and-empty-states.md` | loading, empty and error states, toasts, click to copy |
@@ -65,7 +66,7 @@ All area files are in `references/behaviors/`.
 | AX | `AX-accessibility-and-motion.md` | always |
 | RT | `RT-rtl-and-i18n.md` | always: right to left, languages, user text |
 | EM | `EM-email.md` | email the app sends |
-| OT | `OT-other.md` | patterns from single v3 pages (message details, DMARC records, dashboards); skim the rule titles |
+| OT | `OT-other.md` | patterns from single v3 pages (message details, DMARC records, dashboards); skim the rule titles, and read OT-14 when you build the app shell or sign-in pages and OT-7 in a redesign |
 
 Common starting sets, before adding what the screen contains:
 
