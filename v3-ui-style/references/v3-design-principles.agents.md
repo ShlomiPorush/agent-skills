@@ -22,7 +22,7 @@ Starting values (neutrals have a slight green tint; keep them, replace status co
 
 ```css
 :root {
-    --ui-font: 'Onest', 'Noto Sans Hebrew', system-ui, sans-serif;
+    --ui-font: 'Noto Sans Hebrew', system-ui, sans-serif;
     --ui-mono: 'IBM Plex Mono', 'Noto Sans Hebrew', ui-monospace, monospace;
 
     --ui-fs: 14px;
@@ -92,9 +92,13 @@ Define this scale as tokens and do not add sizes outside it.
 | Body | 14px | 400 | 0 | Default text |
 | Control | 13px | 600 (chips 500) | 0 | Buttons and chips |
 | Small | 12.5px | 600 | 0 | Labels, table headers |
-| Meta | 12px | 500 to 700 | 0 | Time, tags, second lines |
+| Meta | 12px | 500 to 700 | 0 | Time in a row's meta line, tags, second lines |
 
-- Fonts are self hosted (no CDN), woff2 split by `unicode-range`, `font-display: swap`, licence files shipped next to them. Use a Latin font plus a Hebrew font in one stack so mixed text falls back automatically. Use a mono font for addresses, IDs, IPs and hashes at 0.9em. If only some weights of the mono font ship, declare the heaviest file for the weights above it (`font-weight: 500 900`), so a mono value in bold text keeps its real letters instead of a bold the browser fakes (RT-3).
+- A date or time that stands alone in a list row or a table cell (a time only, for today, included) is never body size. It takes the size of the row's other details: 12.5px (`--ui-fs-sm`) in a table cell, 12px (Meta) in a row's meta column or second line, as in v3's message list (ui.css:312). Only the size changes; the cell keeps its weight and colour. A date inside a sentence keeps the sentence's size.
+- Fonts are self hosted (no CDN), woff2 split by `unicode-range`, `font-display: swap`, licence files shipped next to them. The bundled files and their licences are in `references/v3-code/assets/fonts/`.
+- **One UI font for Hebrew, Latin and digits: Noto Sans Hebrew**, with its `hebrew`, `latin` and `latin-ext` files (variable, weights 100 to 900). Do not put a Latin font first and a Hebrew font after it: a Hebrew font file that covers only the Hebrew block leaves digits and Latin letters to the other font, and next to Hebrew they look foreign and the wrong size. Noto Sans Hebrew has no basic Cyrillic or Greek and lacks some extended Latin letters (such as Ə and ŋ); the browser draws those in `system-ui`. A project whose users or data use them adds a font that covers them after Noto Sans Hebrew in `--ui-font` and checks real samples.
+- **Mono (IBM Plex Mono) only for machine values:** IP addresses, hashes, keys and tokens, slugs, IDs and ID numbers, domains, one-time codes, log lines. Inline it is 0.9em; a rule that names its own mono size (a 28px pairing code, 12px log text) keeps it. Values people read use the UI font: email addresses, phone numbers, customer or account codes, dates. The kind of value decides, not the component: a chip, cell or field that holds an email or a phone number uses the UI font. If only some weights of the mono font ship, declare the heaviest file for the weights above it (`font-weight: 500 900`), so a mono value in bold text keeps its real letters instead of a bold the browser fakes (RT-3).
+- A project that already has an older stack (a Latin font first, such as Onest) changes the `@font-face` rules, the `--ui-font` token and the font files together, so no old rule keeps winning. Remove the old font files and their licence only after a search shows that nothing else uses them.
 - Every number in a column, KPI, counter or time uses `font-variant-numeric: tabular-nums`.
 
 ### Spacing, radius, depth
@@ -166,7 +170,7 @@ Build every page from a small component set. Add a new component only when no ex
 - **Thresholds are fixed and documented** (example: pass rate green from 95%, amber from 80%, red below; storage amber above 75%, red above 90%).
 - Thousands separators on every count (`toLocaleString()`); a network's size stays a plain figure, since a separator there changes with the browser's language (FW-3).
 - Times in the application's configured time zone, not the browser's, written by one set of helpers in the date and time formats picked in Settings (24-hour clock by default, numbers instead of month names); a page never formats a date itself, and a test enforces it (FW-9). In lists: time only for today, day and month earlier this year, the whole date before.
-- IDs, addresses and IPs in mono and **click to copy**: faint background and copy icon on hover; copies the full value (not the truncated one); the icon turns into a check for 1.5s; a toast says "Copied: <value>".
+- IDs, email addresses and IPs **click to copy** (IDs and IPs in mono, an email in the UI font, RT-3): faint background and copy icon on hover; copies the full value (not the truncated one); the icon turns into a check for 1.5s; a toast says "Copied: <value>".
 - **Every count is a link** to the list it counts, filtered exactly.
 - **User content keeps its own direction:** `dir="auto"` on the element and the text wrapped in `<bdi>`. Hex colours and other values that start with a neutral character also need an LTR isolate inside RTL text.
 - Escape everything that comes from the server. Country flags are local PNG images, never emoji (Windows shows flag emoji as two letters).
@@ -339,7 +343,8 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - [ ] The product's own logo where OT-14 places it, never a generic icon
 - [ ] Logical properties only; user values have `dir="auto"`
 - [ ] Numbers use tabular figures and thousands separators (a network's size excepted, FW-3); dates and times use the app time zone and go through the format helpers
-- [ ] IDs and addresses in mono with click to copy
+- [ ] IDs and IPs in mono; emails, phone numbers and dates in the UI font; IDs, emails and IPs click to copy
+- [ ] A date alone in a list row is at the size of the row's other details, not body size
 - [ ] Page state is in the URL
 - [ ] All assets (fonts, libraries, images) are served locally
 - [ ] Focus visible from the keyboard; focus moves into a dialog or sheet and returns to its trigger
