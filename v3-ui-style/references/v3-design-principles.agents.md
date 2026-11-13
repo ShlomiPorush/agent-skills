@@ -118,9 +118,9 @@ Depth has three levels only: none (page and panels), floating (`0 12px 32px rgb(
 
 | Width | Navigation | Counters | Content padding |
 | --- | --- | --- | --- |
-| above 1100px | 240px sidebar: brand, status card, labelled groups, tools at the bottom | Number in an amber or red tag | 22px top, 28px sides |
+| above 1100px | 240px sidebar: brand (the product's logo and name; OT-14 says where it shows), status card, labelled groups, tools at the bottom | Number in an amber or red tag | 22px top, 28px sides |
 | 761 to 1100px | 72px icon rail, no labels, flyout names on hover | 8px dot | 22px |
-| up to 760px | 56px top bar with blur, 64px bottom tab bar, every other page in a "More" bottom sheet | Red pip; the Needs attention bell in the top bar | 16px top, 12px sides |
+| up to 760px | 56px top bar with blur and the logo at its start, 64px bottom tab bar, every other page in a "More" bottom sheet | Red pip; the Needs attention bell in the top bar | 16px top, 12px sides |
 
 - Active nav item: full accent fill plus `aria-current="page"`, not a coloured line.
 - Nav counters appear only when there is something to act on; colour follows severity.
@@ -139,14 +139,14 @@ Build every page from a small component set. Add a new component only when no ex
 - **Key value row:** muted label at the start, value 650 weight at the end.
 - **Alert row:** 4px status colour bar, text, one action.
 - **Item with status:** 3px status edge on `border-inline-start`; the ok edge at 55% opacity so healthy rows stay quiet.
-- **KPIs:** large number over a muted label; draw cell lines with `outline` so an incomplete last row leaves no grey block.
+- **KPIs:** large number over a muted label; draw cell lines with `outline` so an incomplete last row leaves no grey block. A KPI row belongs where its figures drive a decision on that page (Dashboard, Status, a period summary such as Mailbox Stats). A list page has no KPI row: the counts of its own rows are its count line (TB-17) and the hints in its filter options (MP-1), and a count of another page's items stays on that page.
 - **Meter:** 6px high, colour by threshold.
 - **Buttons:** default has a `--ui-line` border that darkens to muted on hover. At most one primary (accent fill) per area. Danger is red text (`.ui-btn-danger`); a red fill (`.ui-btn-danger-solid`) is kept for bulk deletes and for the confirm button of a destructive question. Icon button 34x34, no border.
-- **Tag vs chip:** a tag shows status (6px radius, 12px/700, not clickable). A chip is a filter (pill, 30px high, small count inside, active state in `aria-pressed`). Never mix the two.
+- **Tag vs chip:** a tag shows status (6px radius, 12px/700, not clickable). A filter chip is a filter choice shown in a row (pill, 30px high, small count inside, active state in `aria-pressed`), used only where MP-1 allows it; any other list filter, status included, is a drop-down (MP-1). Never mix the two.
 - **Fields:** 34px, `--ui-bg` background even inside a panel, accent border on focus, muted 12.5px/600 label above.
 - **Tabs:** 2px accent underline on the active tab, others muted; scroll sideways instead of wrapping.
 - **Switch** (not a checkbox) for turning a feature on; mirror the knob with a `[dir="rtl"]` rule.
-- **Popover:** anchored with `inset-inline-start`, 320px wide, never off screen. Row "More" menus are popovers so a table cannot clip them. On phones they stay popovers, clamped inside the screen (MP-5, MP-7); the phone bottom sheet is for dialogs, row details and help (DS-1 to DS-4).
+- **Popover:** anchored with `inset-inline-start`, 320px wide, never off screen. Row "More" menus are popovers so a table cannot clip them. On phones they stay popovers anchored to their button, clamped between the top bar and the tab bar, also when the panel holds rich content; none becomes a bottom sheet or a docked panel (MP-5, MP-7). The phone bottom sheet is for dialogs, row details and help (DS-1 to DS-4).
 - **Dialog:** up to 1100px wide and 90% high, fixed header with title and X, scrolling body, the actions in a foot. Every dialog built in code comes from one builder that needs a width (460, 680 or 1100px) and a close function for its X; a dialog written in the HTML keeps the same frame, the few layers that differ are listed with a reason, and a test fails on a dialog, sheet, menu, picker or toast made any other way (DS-24). On phones every dialog is a bottom sheet that opens at 80% and grows with the scroll (DS-1); it reaches full screen without radius only by growing, except a live log, which opens at full height at its end (LD-2).
 - **Confirm:** same dialog frame without an X; the confirm button is red only for destructive actions; Escape, Cancel and on a phone a pull down all cancel; say what will happen and how many items are affected.
 - **Toast:** bottom end corner (above the tab bar on phones), 4px status edge, one at a time (a new one replaces the current one), closes after 4 seconds but waits while the pointer or the focus is on it and then keeps at least 1.5 seconds; errors `role="alert"`, others `role="status"` (FB-2).
@@ -307,6 +307,7 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - New live lines scroll a selection away and trim it (LD-2, LD-14).
 - Overlapping loads of one list let an old answer replace the new list; offset paging skips or repeats rows when rows come and go (TB-6, SV-10).
 - A dialog that stops click propagation breaks shared drop-downs inside it (MP-1).
+- "Every dialog is a sheet on phones" (DS-1) read as covering pickers: a picker's panel, also a rich one, is placed as MP-5 says and never becomes a sheet (MP-1, MP-5).
 - Popups built by hand drift apart: an X goes missing, buttons end up inside the scrolling body, sheets draw another X, a log is no sheet on phones; build each through its builder, or its frame where it lives in the HTML, list the exceptions with a reason, and let a test fail on any other (DS-24).
 - A long header above a dialog's tabs pushes the content out of reach; scroll header, tabs and content as one with the tabs sticky (DS-14).
 - Outlook for Windows: no `max-width`, no padding outside cells, growing VML overlaps, the last row's bottom border is dropped (EM-2).
@@ -333,6 +334,9 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - [ ] Checked in light and dark, including native controls and charts
 - [ ] Checked at 1280px and up, in the rail range (up to 1100px) and on a phone (up to 760px)
 - [ ] Phone: actions under the text, secondary filters folded, 16px inputs, 44px touch targets
+- [ ] Picker and menu panels are placed as MP-5 says at every width; on a phone none is a bottom sheet or a docked panel
+- [ ] List filters follow MP-1 (drop-downs with counts as option hints; chips only where MP-1 allows them); a list page has no KPI row of its own counts (TB-17)
+- [ ] The product's own logo where OT-14 places it, never a generic icon
 - [ ] Logical properties only; user values have `dir="auto"`
 - [ ] Numbers use tabular figures and thousands separators (a network's size excepted, FW-3); dates and times use the app time zone and go through the format helpers
 - [ ] IDs and addresses in mono with click to copy
