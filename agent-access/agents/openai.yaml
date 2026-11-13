@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Access"
+  short_description: "Let AI agents act in a product after a person approves them"
+  default_prompt: "Use $agent-access to add person-approved agent connection (MCP and an agent skill) to this product."
