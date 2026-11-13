@@ -477,7 +477,7 @@ bad_url() {
 # The file that keeps the address of the last working connection, so a copy of the skill without one finds it.
 kept_address() {
   [ -e "$ADDRESS" ] || [ -L "$ADDRESS" ] || return 0
-  [ -f "$ADDRESS" ] && [ ! -L "$ADDRESS" ] || fail insecure_credentials "$ADDRESS must be a plain file."
+  if ! { [ -f "$ADDRESS" ] && [ ! -L "$ADDRESS" ]; }; then fail insecure_credentials "$ADDRESS must be a plain file."; fi
   check_private "$ADDRESS"
   # The whole file (x keeps the line breaks at its end), without the line breaks at its end.
   KEPT=$(
@@ -517,6 +517,8 @@ keep_address() {
 # Only this user may open the folder and its files; never loosened or fixed silently.
 check_private() {
   [ -L "$1" ] && fail insecure_credentials "$1 must be plain, not a link."
+  # -O is not in POSIX, but dash, bash, busybox ash and the macOS sh all have it. A shell without it fails here: closed.
+  # shellcheck disable=SC3067
   [ -O "$1" ] || fail insecure_credentials "$1 belongs to another user. Use a folder of your own."
   # The mode string itself is what is checked; the path is ours.
   # shellcheck disable=SC2012
@@ -1116,7 +1118,7 @@ api_send() {
         "read "* | "act "*) KIND=${k%% *} REVISION=${k#* } ;;
         "both "*)
           KIND=act REVISION=${k#* }
-          [ "$BOTH" = 1 ] && KIND=read
+          if [ "$BOTH" = 1 ]; then KIND="read"; fi
           ;;
         *) fail bad_path "$NOT_LISTED" ;;
       esac
@@ -1212,7 +1214,7 @@ kinds_fetch() {
   if api_send GET "$ISSUER$ENDPOINTS_PATH" ""; then kf_ok=1; else kf_ok=0; fi
   SOFT=0
   KIND=$kf_kind REVISION=$kf_rev s_ref=$kf_ref s_busy=$kf_busy s_net=$kf_net s_pol=$kf_pol
-  [ $kf_ok = 1 ] && [ "$STATUS" = 200 ] || fail endpoints_unavailable "$UNAVAILABLE"
+  if [ "$kf_ok" != 1 ] || [ "$STATUS" != 200 ]; then fail endpoints_unavailable "$UNAVAILABLE"; fi
   kinds_build "$RESP" "$LISTGEN" || fail endpoints_unavailable "$UNAVAILABLE"
   kinds_store "$LISTGEN"
 }
@@ -1276,9 +1278,9 @@ cmd_api() {
     2??)
       # Any strict JSON value is JSON, null, false, numbers and strings included, as in the other versions.
       isjson=$RESP_JSON
-      if [ $listing = 1 ] && [ $isjson = 1 ] && kinds_build "$RESP" "$lgen"; then kinds_store "$lgen"; fi
-      if [ $isjson = 1 ]; then data=$(tr -d '\r\n' <"$RESP"); else data=$(json_string "$RESP"); fi
-      if [ $isjson = 1 ] && [ "$(json_scan failed "$RESP")" = 1 ]; then
+      if [ "$listing" = 1 ] && [ "$isjson" = 1 ] && kinds_build "$RESP" "$lgen"; then kinds_store "$lgen"; fi
+      if [ "$isjson" = 1 ]; then data=$(tr -d '\r\n' <"$RESP"); else data=$(json_string "$RESP"); fi
+      if [ "$isjson" = 1 ] && [ "$(json_scan failed "$RESP")" = 1 ]; then
         printf '{"error":"failed","message":"%s","status":%s,"data":%s}\n' "$(esc "$method ${2:-} answered that it failed.")" "$STATUS" "$data"
         exit 1
       fi

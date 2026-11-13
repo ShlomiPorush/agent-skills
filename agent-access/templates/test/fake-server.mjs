@@ -67,6 +67,8 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
       refreshAccessTtl: null,
       deviceInterval: undefined,
       dropNextRefresh: false,
+      // The next device token answer is made, then lost: the connection breaks before it is sent.
+      dropNextDeviceToken: false,
       truncateNextRefresh: false,
       refreshDelayMs: 0,
       revokeStatus: 200,
@@ -184,7 +186,14 @@ export async function startFakeServer(port = 0, host = "127.0.0.1") {
         const grant = id()
         d.grant = grant
         s.grants.set(grant, { alive: true, scope: d.grantScope ?? d.scope })
-        return send(200, issue(grant, s.accessTtl))
+        const tokens = issue(grant, s.accessTtl)
+        if (s.dropNextDeviceToken) {
+          s.dropNextDeviceToken = false
+          s.orphan = tokens.refresh_token
+          req.socket.destroy()
+          return
+        }
+        return send(200, tokens)
       }
       if (form.grant_type === "refresh_token") {
         s.counts.refresh++

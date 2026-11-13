@@ -39,7 +39,9 @@ The agent never receives the target's own credential.
 
 - Made with a CSPRNG at approval, with a short visible prefix.
 - Stored as a hash for lookup, plus an encrypted copy (with the product's key for stored secrets) until the agent collects it.
-- Collected once: the first look after approval returns the key and clears the encrypted copy in the same conditional update. Later looks return only the prefix and "already collected".
+- Collected once: the first look after approval returns the key and clears the encrypted copy in the same conditional update. Later looks return only the prefix and "already collected". Collecting also checks that the connection's grant still exists.
+- The route that hands out the key is `act`, even when it is a `GET`, because it spends something (`policy-and-channels.md`). Its MCP tool has no `readOnlyHint`. When collecting answers `outcome_unknown`, the agent reads the request once. If it is approved and the key did not arrive, the agent releases it and asks again.
+- A refusal made before anything changed (`busy`, an invalid request) is a 4xx, never a 5xx, so the client does not report `outcome_unknown` for it.
 - Accepted only by the proxy, only for the granted targets, only until the access ends.
 
 ## The proxy
@@ -53,7 +55,8 @@ The agent never receives the target's own credential.
 
 - **Expired:** a background job ends approved access whose time is up, and pending requests nobody decided.
 - **Released:** the agent releases it with an optional summary (n8n-ops: up to 1000 characters, clipped, never refused, so a long summary cannot keep a key alive). The same update that ends the access keeps the summary.
-- **Revoked:** a person revokes it. Disconnecting the agent's connection revokes all its access.
+- **Revoked:** a person revokes it.
+- **Connection ended:** every way a connection ends revokes all its access, in the same transaction. That includes the library's own paths that delete a grant directly (revocation, refresh or code reuse), so the proxy and the key check also confirm that the grant still exists.
 - On every end, the key stops working at once and the encrypted copy is cleared. The request page and the message show how long the access was used, the summary, and how many calls were made and refused.
 
 ## What the client skill tells the agent
@@ -71,4 +74,5 @@ The agent never receives the target's own credential.
 - Collect the key twice at once: one gets it.
 - Release, revoke, expire: the key stops working at once.
 - The proxy refuses a scope, an item and a target not granted, and records it.
-- Disconnecting the connection revokes its access.
+- Every end of the connection revokes its access, including a reused refresh token and a revocation through the library.
+- Collecting after a lost answer: the agent reads, releases and asks again, and never gets a second key.

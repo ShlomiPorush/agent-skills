@@ -25,7 +25,12 @@ const KIND_HEADER = "x-myapp-kind"
 /* ---- End of product constants. ---- */
 
 const win = process.platform === "win32"
-const scripts = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts")
+// The skill's scripts: MYAPP_SCRIPTS_DIR, or ../scripts from this file. Keep the suite outside the skill folder
+// that installers copy from Git, and point MYAPP_SCRIPTS_DIR at the scripts.
+const scripts = path.resolve(
+  process.env[`${ENV}SCRIPTS_DIR`] || path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts"),
+)
+if (!fs.existsSync(path.join(scripts, `${NAME}.mjs`))) throw new Error(`No ${NAME} scripts in ${scripts}. Set ${ENV}SCRIPTS_DIR.`)
 // ps is Windows PowerShell 5.1, pwsh PowerShell 7: the same myapp.ps1 runs on both.
 const impls = (process.env[`${ENV}IMPLS`] ?? (win ? "node,ps,pwsh" : "node,sh")).split(",").filter(Boolean)
 const tmpBase = process.env[`${ENV}TEST_TMP`] || os.tmpdir()
@@ -289,6 +294,22 @@ for (const impl of impls) {
       const d = await run(impl, inst, server, ["connect", "--wait"])
       assert.equal(d.json.error, "denied")
       assert.equal(d.code, 1)
+    })
+
+    it("never collects an approved code twice after its answer was lost", async () => {
+      const inst = fresh()
+      await run(impl, inst, server, ["connect"])
+      server.approve()
+      server.dropNextDeviceToken = true
+      const lost = await run(impl, inst, server, ["connect", "--wait"])
+      assert.equal(lost.json.error, "unreachable", lost.out + lost.err)
+      const orphan = server.orphan
+      // The code was spent: presenting it again is a reuse, which ends the grant made for the lost answer.
+      const again = await run(impl, inst, server, ["connect", "--wait"])
+      assert.equal(again.json.error, "expired", again.out + again.err)
+      assert.equal(server.grants.get(server.refresh.get(orphan).grant).alive, false, "the lost answer's grant ended")
+      assert.equal((await run(impl, inst, server, ["status"])).json.status, "not_connected")
+      noSecrets(server, lost, again)
     })
 
     it("reads the API with the stored access token, refreshing only when it runs out", async () => {

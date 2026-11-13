@@ -34,7 +34,7 @@ Only if your tools can keep a command running after your turn ends and wake you 
 
 ## What you may do
 
-The person chose the areas when approving. <One sentence per area: what it reads or does.> Every call runs with the person's own permissions in MyApp, so you see and change only what they could.
+The person chose the areas when approving. <One sentence per area: what it reads or does.> <Keep the sentence for the product's shape (`references/architecture.md`) and delete the other. When the agent acts as the person: "Every call runs with the person's own permissions in MyApp, so you see and change only what they could." When the agent has its own identity on dedicated routes: "Every call runs as this connection, on the agent routes MyApp opened for it, and is recorded as made by an agent for the person who approved it.">
 
 1. Run `myapp access` (the areas you may read or act in, and until when) and `myapp endpoints [area]` (every call you may make, each with its method, path, parameters, and `kind`, which is read or act). If `access` also answers `update_skill`, that is only a notice: go on with your task and tell the person in one line. Change this skill's folder only if an agent installed this copy from MyApp's `/agents/skill/` (you know it, or the person confirms it). Then install it again from there and read the new SKILL.md. Otherwise never change the folder: it may come from Git or be managed by a tool. The connection is kept either way.
 2. Take every path from the table below or from `endpoints`, with its `{...}` parts filled in. Never guess a path: the command refuses one that is not on the list (`bad_path`). Quote the path. Percent-encode spaces and other characters in query values.

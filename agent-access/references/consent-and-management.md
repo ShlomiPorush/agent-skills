@@ -23,7 +23,7 @@ It shows:
 - **Who asks:** the agent's name, marked as the name the agent gives itself, which the product cannot prove. For a client metadata document, the host that published it. For the client skill, its label.
 - **Where the browser returns:** the redirect host, and whether it is this computer (loopback).
 - **Which resource:** the MCP server or the REST API.
-- **What it may do:** the areas or scopes the person may grant, each with one sentence, ticked as the agent asked (or a default set), and the person may untick any. Offer only areas the person could use themselves (Comply offers form design only to people allowed to create forms).
+- **What it may do:** one set of areas, each with one sentence, all ticked, and the person may untick any. The set is the areas the agent asked for that the person could use themselves (Comply offers form design only to people allowed to create forms). When the agent asked for no known area, it is a default set. An area outside the set is never shown. When the set is empty, show a page that says why, with no approve button. MCP clients usually ask for every scope the 401 challenge names (lesson 19), so in practice they see every area the person may use.
 - **How long it lasts:** the lifetime rule, in words, with the end date when the end is computed.
 - **A warning:** "Approve only an agent you started yourself." For a code: "Check that your agent shows the same code." For a loopback redirect: "Any program on this computer can give itself this name."
 - **Approve** and **Deny**.
@@ -34,9 +34,9 @@ The product decisions here (areas, defaults, account types such as Comply's pers
 
 `POST <consent path>/<request id>` with a JSON body, for example `{"approve": true, "areas": [...]}`.
 
-- **CSRF:** check that `Origin` equals the product's own origin (refuse a missing one), require `Content-Type: application/json`, keep the session cookie `SameSite` (`Lax` at least), and look the request up by its id bound to the session. Each of these covers a gap in the others.
-- **Validate before taking.** Refuse an empty selection or an area that was not offered with 400, and leave the request open so the page can fix it.
-- **Grant only what was asked and ticked.** An area the agent did not ask for is never granted. A required base area may be always on.
+- **CSRF:** check that `Origin` equals the issuer's origin as a browser spells it (S3 in `server-oauth.md`), and refuse a missing one. Behind a proxy, the issuer comes from the public URL setting. `Host` or `X-Forwarded-Host` alone is never trusted. Require `Content-Type: application/json`, keep the session cookie `SameSite` (`Lax` at least), and look the request up by its id bound to the session. Each of these covers a gap in the others: `SameSite=Lax` does not stop a page on a sibling subdomain, and the `Origin` check does. A CSRF helper the product already has may accept a request with no `Origin`: check before you reuse it.
+- **Validate before taking.** Compute the set the same way the page did, and refuse an empty selection or an area outside the set with 400, before the request is taken, so the page can fix it.
+- **Grant only what was asked and ticked.** An area the agent did not ask for is never granted, also when a forged POST names it. A required base area may be always on.
 - **Make the grant atomically against ending** (S19 in `server-oauth.md`): take the request only after the locks, so "disconnect all" either dropped it already or waits and then ends what the answer made.
 - Answer where the browser goes next: back to the agent with `code`, `state` and `iss`, or `access_denied`. For a device code, a page that says the agent is connected and the person can return to it.
 - `Cache-Control: no-store` on every consent and code answer. `X-Frame-Options: DENY` and `frame-ancestors 'none'` on every page of the flow, and `Referrer-Policy: no-referrer`.
@@ -62,7 +62,7 @@ A person lists and disconnects only their own connections. Another person's conn
 ## The admin's page and settings
 
 - **Settings** (admin-editable, with defaults, never only environment variables):
-  - agents on or off (off by default). Turning it off ends every connection;
+  - agents on or off (off by default for a new installation, while an installation that already uses agent connection keeps it on when it upgrades). Saving "off" and ending every connection happen in one transaction, and at start-up any connection still active while agents are off is ended;
   - the maximum connection period, when the lifetime decision has one. Saving a shorter one applies at once. Saving a longer one never revives an ended connection;
   - the reason the switch is locked, when it is (no valid public URL, `http` that is not loopback, the public URL on another origin than the sign-in redirect).
 - **Every connection:** grouped by person, with the counts (connections, people, by account type). It stays available while the switch is locked, so connections can still be ended.
@@ -77,13 +77,13 @@ Each with who acted (the person, an admin, the agent's connection, or the system
 |---|---|
 | Agent approved | Agent name, how it connected, the areas, account type or lifetime |
 | Agent denied | Agent name |
-| Connection ended | Connection, reason (from the table in `architecture.md`), who ended it |
+| Connection ended | Connection, reason (from the table in `architecture.md`, including a reused refresh token or code), who ended it |
 | All connections ended | Count, reason, who |
-| Refresh token or code reused | Connection |
 | Blocked after too many attempts | What was limited, the address, once per window |
+| Call refused | Connection, route template, the refusal code (`busy` at most once per window per connection, and only after the token was checked) |
 | Agent settings changed | Old and new values |
 | Tool call | Connection, tool, routes run, outcome |
-| API call | Connection, method, route template, outcome |
+| API call | Connection, method, route template, outcome. How to write it once per call: `policy-and-channels.md` |
 | Temporary access events | See `temporary-access.md` |
 
 Let admins filter the audit log by agent events.

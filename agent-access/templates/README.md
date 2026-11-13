@@ -18,15 +18,17 @@ The placeholder product is `myapp`. Rename it and set the product constants befo
 | `test/fake-server.mjs` | A strict stand-in for the product's authorization server and REST API. Like many real servers, it decodes the path before it routes it. Switches make its router match in any case, drop `;` parameters, or pick the static or the dynamic one of two routes that match a path. |
 | `test/contract.test.mjs` | The contract suite. It runs against every version the computer can run. |
 | `test/package.json` | Runs the suite with `npm test`. |
-| `ci/skill-contract.yml` | An example GitHub Actions job for the product: Windows (node, ps, pwsh) and macOS (node, sh). |
+| `ci/skill-contract.yml` | An example GitHub Actions workflow for the product: shellcheck and shfmt for the sh scripts, and the suite on Windows (node, ps, pwsh) and macOS (node, sh), run only when the skill changes. |
 
 The three versions have one contract. They take the same commands, print the same JSON and error codes, and use the
 same files and the same lock. They can run side by side on one computer.
 
 ## Adapt the templates
 
-1. Copy `scripts/` and `client-skill.md` into the folder that the product serves its skill from. Copy `test/` next
-   to `scripts/` (the suite looks for the scripts in `../scripts`).
+1. Copy `scripts/` and `client-skill.md` into the folder that the product serves its skill from. Copy `test/`
+   outside that folder, for example into the product's tests. Installers copy the skill folder from Git as it is,
+   and the suite does not belong in an agent's copy. Set `MYAPP_SCRIPTS_DIR` to the scripts folder when you run the
+   suite (without it, the suite looks in `../scripts`).
 2. Rename the four script files from `myapp` to the product's command name. Keep the extensions.
 3. Set the product constants. Each script has one marked block at its top (`Product constants`). Set the same values
    in all three versions, in the entry point, and in the constant blocks of `test/fake-server.mjs` and
@@ -188,13 +190,14 @@ The prefix is `ENV_PREFIX` (`MYAPP_` in the templates).
 | `MYAPP_WAIT_SECONDS` | How long `connect --wait` waits for the approval (default 90). |
 | `MYAPP_LOCK_WAIT_MS` | How long a command waits for the lock (default 20000). |
 | `MYAPP_TEST_*` | Test hooks and shorter waits for the contract suite only. |
+| `MYAPP_SCRIPTS_DIR` | The contract suite only: the folder that holds the scripts it tests. |
 
 ## Run the contract tests
 
-From the `test` folder:
+From the folder that holds the suite, with `MYAPP_SCRIPTS_DIR` set to the scripts folder:
 
 ```sh
-npm test
+MYAPP_SCRIPTS_DIR=../../skill/myapp/scripts npm test
 ```
 
 `MYAPP_IMPLS` picks the versions (default `node,ps,pwsh` on Windows and `node,sh` elsewhere). `MYAPP_TEST_TMP`
@@ -204,6 +207,22 @@ runs the entry points and checks that two versions share one connection. It runs
 
 The fake server and the tests hold no fixed secret: every token, code and id is made with `randomBytes` at run time,
 and the CI job uses no secret. Keep it that way. Never add a fixture with a working token, key or password.
+
+## Replacing an existing client
+
+When the product already ships a client and these scripts replace it, installed copies and the connections they keep
+must survive the change:
+
+- Keep the credential file format, the credentials folder and the lock, or migrate them in the new client. A person
+  who connected with the old client must not have to approve again.
+- Add contract cases that start from files the old client wrote: its connection record and its lock, read by the new
+  client; its kept list of calls in an older format, ignored and fetched again; a device flow still waiting for
+  approval; a refresh that was cut off.
+- Raise `SKILL_REVISION` and the served version, so that installed copies are told to update.
+- When the server starts to require the policy and kind headers, old copies get `policy_changed` on every call.
+  That refusal must say how to install the skill again, because an old copy may not read `update_skill`.
+- Release and deploy the server before installers pick up the new client. A new client against an old server sends
+  nothing (`endpoints_unavailable`). Installers from Git should follow a release tag, not the default branch.
 
 ## Files in Git
 

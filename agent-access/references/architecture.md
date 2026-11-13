@@ -45,7 +45,7 @@ The closed route table and the exposure test apply to both shapes. In the second
 
 ## How a connection ends
 
-Every end is final. A new approval makes a new connection.
+Every end is final. A new approval makes a new connection. An end and all its side effects (the record, the library's grant and tokens, pending requests and codes, temporary access) happen in one transaction, all or nothing.
 
 | End | When |
 |---|---|
@@ -53,7 +53,7 @@ Every end is final. A new approval makes a new connection.
 | All disconnected | An admin ends every connection. Waiting codes, device requests and pending consent end too. |
 | Turned off | An admin turns agents off. |
 | Expired | The connection passes its end under the lifetime rule. A check or a refresh that finds it past its end ends it, so a later, longer maximum never brings it back. |
-| Unused | Under an idle rule, no refresh for the idle period. |
+| Unused | Under an idle rule, no real API or MCP call for the idle period. A refresh does not count as use. |
 | Refresh reused | A used refresh token came back. It may have leaked, so the whole grant ends. |
 | Code reused | An authorization code or device code was used twice. |
 | Person changed | The person's account was deactivated or deleted, or the identity the grant was approved with changed (for example the identity provider's subject). |
@@ -73,8 +73,8 @@ Where the two products made different choices, this skill takes the stronger one
 | Telling an agent its skill is old | An `update_skill` notice that never forces a change | Comply | A copy installed from Git belongs to whoever installed it. |
 | Consent CSRF | `Origin` check, JSON content type, `SameSite` cookie, a request id bound to the session | Both | Each covers a gap in the others. |
 | Tokens at rest | Hashes only, or a decision for Shlomi when the library cannot | Comply | A database read must not hand out working tokens. |
-| `Origin` on `/mcp` | Validated, as the MCP transport specification requires | The specification | A request without `Origin` still passes, so non-browser clients work. |
+| `Origin` on `/mcp` | Validated, as the MCP transport specification requires | The specification | A request without `Origin` still passes, so non-browser clients work. A browser-based MCP client on another origin gets 403. |
 | Lifetime | A decision for Shlomi | Neither | It depends on the product. |
 | Retries in the client | Resend only after the three refusals the server makes before route code runs | Neither, stricter than both | Any other refusal may come after the action ran. |
-| PowerShell HTTP | A raw socket, never .NET `HttpClient` | Comply | `HttpClient` re-sent a dropped request four times in PowerShell 7, which spends a one-time refresh token twice. |
+| PowerShell HTTP | A raw socket, never .NET `HttpClient` | Comply | In Comply's tests, `HttpClient` re-sent a dropped request four times in PowerShell 7, which spends a one-time refresh token twice. n8n-ops did not reproduce it in nine plain-HTTP cases. The raw socket stays as a precaution. |
 | PowerShell file reads | Open shared for read, write and delete | n8n-ops | `ReadAllText` blocks another command from replacing or deleting the file, which then fails. |

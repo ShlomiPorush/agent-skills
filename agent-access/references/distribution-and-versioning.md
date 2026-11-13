@@ -1,6 +1,6 @@
 # Serving the skill and keeping it current
 
-How agents get the client skill, how a person starts the connection, and how an agent learns that its copy is old without anyone forcing a change on it.
+How agents get the client skill, how a person starts the connection, and how an agent learns that its copy is old, and how to roll out a change that older copies cannot follow.
 
 ## Two ways to connect, one sentence each
 
@@ -39,6 +39,8 @@ The skill's folder works as it is in the product's repository, unrendered, so a 
 - The command takes the address from `--url`, `MYAPP_URL`, or the address it kept after a working connection.
 - The entry point and the sh version are executable in Git (`git update-index --chmod=+x`).
 - The skill never writes in its own folder, so the copy stays clean.
+- The folder holds only what an agent needs. Keep the contract suite and its fake server outside it.
+- Point installers at a release tag, not the default branch, so installed copies never run ahead of the deployed server.
 
 ## The version notice
 
@@ -54,9 +56,19 @@ The `access` route compares it and, when the copy is old, adds `update_skill` to
 - `r<n>` equal to or higher than the server's: no notice. A Git copy newer than the server is not told anything.
 - No header, or an unknown value: treat it as an old served copy.
 
-It is a notice, never a block: the call still works. `SKILL.md` tells the agent the same rule.
+It is a notice, never a block: the call still works. The one exception is a change the server enforces (below). `SKILL.md` tells the agent the same rule.
 
 Raise `SKILL_REVISION`, in the server and in all three scripts together, when copies already installed must change: a command, path, header, answer or instruction that an older copy would get wrong. Other changes keep it.
+
+## Rolling out a client change the server enforces
+
+Some changes cannot be a notice. When the server starts to require the policy and kind headers (`policy-and-channels.md`), every older copy is refused:
+
+- **It is a hard cut.** An older copy gets 409 on every call except `access` and the endpoints listing. That is safe, because a client never resends after a 409 it does not know. A grace period that lets calls without the headers through weakens rule 4 of `SKILL.md`, so it is a decision for Shlomi.
+- **The refusal says how to update.** An older copy may never show `update_skill`, so the 409 for missing headers names where to install the skill again.
+- **The other direction fails closed too.** A new copy against an older server cannot read the endpoints listing and answers `endpoints_unavailable`. A distinct message when the listing route is 404 ("the product is older than this skill") helps the person.
+- **Order.** Release and deploy the server first, then update installed copies. A copy that tracks the default branch runs ahead of the deployed server from the merge until the deploy: pin installers to a release tag, or release right after the merge. Name this window in the gap table.
+- **Keep the connection.** Keep the credential file format, so existing connections survive the update, and add contract cases that start from the old client's files (`testing.md`).
 
 ## The client `SKILL.md`
 
