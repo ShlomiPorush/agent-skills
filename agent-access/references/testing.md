@@ -14,7 +14,7 @@ When the policy headers become required, existing API tests break. A test helper
 
 ### OAuth
 
-- Metadata: `issuer` equals the public URL exactly. Both protected resource documents. 404 everywhere while agents are off or the public URL is invalid.
+- Metadata: `issuer` equals the public URL exactly. A plain `http` public URL on any host other than the three loopback names is refused, whatever else the environment sets. Both protected resource documents. 404 everywhere while agents are off or the public URL is invalid.
 - Registration: public clients only. Each bad redirect URI shape refused. Scopes dropped. The cap and the eviction of unapproved registrations. Requests sent at once cannot pass the per-address limit.
 - CIMD: `client_id` mismatch, `http`, another port, an IP address, a host that resolves to a private address, a redirect, a slow answer, a large answer, a compressed answer, and a host the admin trusts for other integrations that resolves to a private address. Each refused with its fixed text.
 - Authorize: PKCE missing, `plain`, a short challenge. A redirect URI that differs in host, path or query. Loopback with another port accepted. Every problem shown in the browser, never redirected.
