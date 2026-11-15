@@ -130,6 +130,7 @@ A message wakes the other side. It does not prove anything by itself.
   1. Read the tracker.
   2. For each running worker, read its thread with a small `t3_thread_read` and list open dialogs with `t3_pending_request list`.
   3. Send `NUDGE` to a worker that is idle and whose latest status did not reach the manager as a checked send, including a status line left only in the worker's own thread. Act only on the checked send that follows.
+     Send the latest `REVISED` again to a worker whose latest report carries a lower `rev` than its row.
   4. For each `WAITING` worker, check its `for` condition, and send `RESUME` once the condition is gone: the lock is free, the command ended, or the check finished.
   5. Launch the next wave when a slot is free.
   The heartbeat acts on these fresh reads, not on the tracker alone.
