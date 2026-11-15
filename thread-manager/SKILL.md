@@ -115,7 +115,7 @@ Every manager message to a worker starts with one envelope line, then short Engl
 
 A message wakes the other side. It does not prove anything by itself.
 
-- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms three facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, the plan number is the worker's current plan or `none` before the first plan, and the `rev` is not lower than the worker's own.
+- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms four facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, the plan number is the worker's current plan or `none` before the first plan, and the `rev` is not lower than the worker's own.
 - The manager, on every worker message:
   1. Matches the `[<run id>:<item>]` tag to a tracker row, and ignores a tag from another run.
   2. Reads the message with `t3_thread_read` and confirms that its `senderThreadId` is that row's worker thread.
