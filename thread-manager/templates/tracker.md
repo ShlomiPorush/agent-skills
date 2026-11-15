@@ -10,7 +10,7 @@ All times are UTC with a `Z` suffix. Convert them only in messages to the user.
 - Brief: `{RUN_DIR}\brief-common.md`
 - Heartbeat: `none` | `creating` | `<scheduled task id>` (title `{RUN_ID} heartbeat`)
 - Watched pull requests: none
-- Merge queue check: not run | none on any page | present or check failed: the user merges
+- Merge queue check (this repository): not run | none on any page | present or check failed: the user merges
 - Merge order: not set
 
 ## Setup answers

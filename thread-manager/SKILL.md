@@ -12,6 +12,7 @@ One agent, the manager, splits a body of work into items and launches each item,
 - Use it only when the user explicitly asks to move work into dedicated or separate threads and to have you manage them. That request is what allows you to create new top-level threads.
 - Ordinary delegation stays with the harness's subagent tool or `delegate_task`. A request for "a subagent", "a delegate", "parallel work", or one new thread is not a request for this skill.
 - The skill needs an agent inside a T3 Code thread with the `t3-code` MCP tools. Outside T3, tell the user that the skill is unavailable.
+- One run covers one repository. For items in another repository, start a separate run with its own brief and tracker.
 
 ## Roles
 
@@ -62,7 +63,7 @@ For each item in the current wave:
    - `workspaceStrategy`: `{type: "worktree", baseRef: "origin/<default branch>", startFromOrigin: true, branch: "<neutral branch name>"}`.
    - `clientRequestId`: `<run id>-<item>-launch`. After an error or a lost reply, retry with the same id, never with a new one.
    - `delegatedFrom`: the manager's `environmentId`, `threadId` and `title`.
-   - `projectId`: only when the item belongs to another project.
+   - `projectId`: the repository's T3 project, when it is not the manager's project.
    - Omit the model, the runtime mode and the interaction mode, so the worker inherits the manager's. `t3_thread_send` cannot reach a thread that runs with broader modes than the sender.
    - `message`: the per-item part.
 3. Record the returned thread id and link in the tracker and set the row to `RUNNING`.
@@ -89,7 +90,7 @@ A worker sends every state change to the manager with `t3_thread_send`, `mode: "
 | `BLOCKED` | The worker cannot continue, for example because the partner budget gate returned `ask`. |
 | `WAITING` | The worker must end its turn before a result. `for <what>` names the lock, the command and its handle, or the check it waits on. |
 
-Short English details follow the first line. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat finds it.
+Short English details follow the first line. The worker numbers every plan (`plan 1`, then `plan 2` after changes), whatever the plan gate, and puts its current plan number in every status line after its first plan. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat asks for a fresh send.
 
 ### Manager envelope
 
@@ -104,7 +105,7 @@ Every manager message to a worker starts with one envelope line, then short Engl
 | `APPROVED` | Plan `<n>` is approved. Continue. |
 | `CHANGES` | Plan `<n>` needs the listed changes. Send a new plan number. |
 | `DECISION` | The user decided `D<n>`. The details give the answer. |
-| `REVISED` | The user changed `D<n>`. Earlier approvals and `PR_READY` that depend on it are void. |
+| `REVISED` | The user changed `D<n>`. Earlier approvals and `PR_READY` for the item are void. Replan or rework under the plan number in the envelope. |
 | `RESUME` | The condition the worker waited on is gone. Continue. |
 | `REBASE` | Main moved. Rebase on the given main SHA, verify again, report again. |
 | `HOLD` | Do not push to the branch until told otherwise. |
@@ -114,12 +115,13 @@ Every manager message to a worker starts with one envelope line, then short Engl
 
 A message wakes the other side. It does not prove anything by itself.
 
-- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms three facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, and the plan number is the worker's current plan, or `none` before the first plan.
+- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms three facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, and the plan number is the worker's current plan, the next plan number in a `REVISED`, or `none` before the first plan.
 - The manager, on every worker message:
   1. Matches the `[<run id>:<item>]` tag to a tracker row, and ignores a tag from another run.
   2. Reads the message with `t3_thread_read` and confirms that its `senderThreadId` is that row's worker thread.
-  3. For `PR_READY`, rejects `review open`, and accepts `review none` only with `tier solo` and the worker's reason. Then checks the pull request itself with `gh pr view <n> --json number,state,headRefName,headRefOid,baseRefName,statusCheckRollup,mergeable`: the right repository, the branch in the tracker, the default branch as base, the reported head, and every check green.
-  4. Only then updates the tracker.
+  3. Rejects a report whose plan number is lower than the row's current plan. A report from a superseded plan never restores readiness.
+  4. For `PR_READY`, rejects `review open`, and accepts `review none` only with `tier solo` and the worker's reason. Then checks the pull request itself with `gh pr view <n> --json number,state,headRefName,headRefOid,baseRefName,statusCheckRollup,mergeable`: the right repository, the branch in the tracker, the default branch as base, the reported head, and every check green.
+  5. Only then updates the tracker.
 
 ## 5. Keep the manager awake
 
@@ -127,7 +129,7 @@ A message wakes the other side. It does not prove anything by itself.
 - **Fallback: one heartbeat.** Create one `schedule_task` bound to the manager thread, every 45 to 60 minutes, titled `<run id> heartbeat`, with `clientRequestId` `<run id>-heartbeat`. Write `heartbeat: creating` to the tracker before the call. After a lost reply, retry with the same `clientRequestId`. Record the returned id. The heartbeat prompt tells the manager to:
   1. Read the tracker.
   2. For each running worker, read its thread with a small `t3_thread_read` and list open dialogs with `t3_pending_request list`.
-  3. Send `NUDGE` to a worker that is idle without a status line.
+  3. Send `NUDGE` to a worker that is idle and whose latest status did not reach the manager as a checked send, including a status line left only in the worker's own thread. Act only on the checked send that follows.
   4. For each `WAITING` worker, check its `for` condition, and send `RESUME` once the condition is gone: the lock is free, the command ended, or the check finished.
   5. Launch the next wave when a slot is free.
   The heartbeat acts on these fresh reads, not on the tracker alone.
@@ -165,23 +167,24 @@ The lock waits for its turn and releases when the command exits. Never delete th
 - **Product decisions.** A behavior users notice, a new setting, a security or usability trade-off, a gap in a library, or a changed meaning of an existing test is a product decision. When you are unsure, treat it as one. Never decide it silently and never approve it inside a plan.
 - **Ask the user in chat.** Use the user's language. Ask one plain question. Give two or three options, each described by what the user will see. Give one recommendation with its reason. Do not open a dialog. The other workers keep running.
 - **Explain without flip-flopping.** When the user asks for more detail, describe a concrete scenario, not theory. Check the facts before you answer, so that a second explanation does not contradict the first.
-- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, and send it to the worker with `DECISION`. When the user changes a decision, log both answers and send `REVISED`. The worker replans with a new plan number, or reworks the change and reports again. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
+- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, and send it to the worker with `DECISION`. When the user changes a decision, log both answers, set the row's current plan to the next plan number, set the row back to `RUNNING`, and send `REVISED` with that plan number. Any earlier approval or `PR_READY` for the item is void. The worker replans or reworks under the new plan number and reports again. Merge only on a `PR_READY` for the new plan. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
 
 ## 8. Merge
 
 Merge only with the user's explicit authorization, given at setup or later in the thread. Merge one pull request at a time, in an order recorded in the tracker. Releases and deploys happen only on an explicit request.
 
 1. **Once per run, check for a merge queue.** Run `gh api --paginate repos/<owner>/<repo>/rules/branches/<default branch>`. If any page lists a `merge_queue` rule, or if the check fails or is incomplete, do not merge. Give the ready pull requests and their reviewed heads to the user.
-2. **Check the pull request.** It is open, mergeable and every check is green. Its head SHA equals the head of the worker's latest checked `PR_READY`, the reviewed head. Set the row to `MERGING` with the pull request number and that SHA.
+2. **Check the pull request.** It is open, mergeable and every check is green. Its head SHA equals the head of the worker's latest checked `PR_READY` for the row's current plan, the reviewed head. Set the row to `MERGING` with the pull request number and that SHA. The row stays `MERGING` until steps 3 to 6 are all done.
 3. **Merge.** Run `gh pr merge <n> --match-head-commit <sha>` with the repository's merge method. Never use `--auto`. Confirm with `gh pr view <n> --json state,mergeCommit` that the state is `MERGED`, and record the merge commit. If the state is not `MERGED`, keep the row at `MERGING`, stop merging, and tell the user. Do not merge the next pull request or delete the branch.
 4. **Wait for main CI.**
    1. Find the expected workflows: those in the default branch's `.github/workflows` whose `push` trigger matches the default branch and whose `paths` or `paths-ignore` filters match the files the merge changed.
-   2. If none apply, record "no main CI for this merge". If you cannot tell, write that in the tracker and in your next message to the user.
-   3. Find each run with `gh run list --commit <sha> --branch <default branch> --event push --workflow <file>`. Retry inside one command for about 10 minutes. If a run does not appear, set `BLOCKED` and tell the user.
+   2. If none apply, record "no main CI for this merge". If you cannot tell which apply, stop merging, and ask the user how to proceed.
+   3. Find each run with `gh run list --commit <sha> --branch <default branch> --event push --workflow <file>`. Retry inside one command for about 10 minutes. If a run does not appear, stop merging, and tell the user.
+   While merging is stopped, the row stays `MERGING` with the reason in its notes. Do not delete the branch, settle the thread, or merge the next pull request until the user decides.
    4. Watch each run with `gh run watch <run id> --exit-status`, in the foreground, or in the background with `t3_background_wait` on Claude. This waits for a branch run, not for a pull request.
    5. If main turns red, stop merging and follow the user's rules for a failing default branch.
 5. **Delete the branch** per the user's rules, unless another open pull request uses it as its base.
-6. **Settle the worker thread** with `t3_thread_organize` and `action: "settle"`, after the quiet check in "Close out".
+6. **Settle the worker thread** with `t3_thread_organize` and `action: "settle"`, after the quiet check in "Close out". Then set the row to `MERGED`.
 
 When a pull request falls behind main:
 
@@ -201,7 +204,7 @@ Read the tracker, then reconcile before any new action:
 - `heartbeat: creating`: look for the schedule with `list_scheduled_tasks` by its title. Record it, or retry the creation with the same `clientRequestId`.
 - `LAUNCHING`: retry `t3_thread_launch` with the same `clientRequestId`. It returns the thread that was already made. Record it.
 - `RUNNING`: read the worker thread and update the row.
-- `MERGING`: read the pull request. If GitHub shows it merged, record the merge commit and finish the remaining merge steps (main CI, branch, settle) before the next pull request. Otherwise, check the pull request again from step 2 of "Merge".
+- `MERGING`: read the pull request. If GitHub shows it merged, record the merge commit and finish the remaining merge steps (main CI, branch, settle) before the next pull request. If the notes say that merging stopped for a user decision, wait for that decision. Otherwise, check the pull request again from step 2 of "Merge".
 
 Never start a second worker for an item before its first worker is reconciled.
 
@@ -216,7 +219,7 @@ Never start a second worker for an item before its first worker is reconciled.
 
 ## 11. Close out
 
-1. **Check that every worker is quiet.** Its `t3_thread_list` status is `idle`, `completed`, `interrupted`, `failed`, or `cancelled`, never `preparing`, `queued`, `starting`, `running`, or `waiting`. It has no open dialog. No manager message to it is still queued. Its last checked report is final for its item: `PR_READY` for an item the manager verified as `MERGED` or handed to the user, `NOT_NEEDED`, or any report for an item the manager recorded as `CLOSED`. Run the same check before you settle a single worker or clean up its worktree.
+1. **Check that every worker is quiet.** Its `t3_thread_list` status is `idle`, `completed`, `interrupted`, `failed`, or `cancelled`, never `preparing`, `queued`, `starting`, `running`, or `waiting`. It has no open dialog. No manager message to it is still queued. Its last checked report is final for its item: `PR_READY` for an item that GitHub shows merged or that the manager handed to the user, `NOT_NEEDED`, or any report for an item the manager recorded as `CLOSED`. Run the same check before you settle a single worker or clean up its worktree.
 2. **Check that every item is terminal** in the tracker. Give each item that is not terminal to the user explicitly in the final report, with its thread link and state. Leave its thread unsettled and keep its branch and worktree.
 3. **Stop every wake.** Delete the heartbeat with `delete_scheduled_task`, including any schedule whose title carries the run id but whose id was never recorded. Confirm with `list_scheduled_tasks`. Stop every pull request watch with `unwatch_pull_request`.
 4. **Settle** every worker thread whose item is terminal.
@@ -235,7 +238,7 @@ Never start a second worker for an item before its first worker is reconciled.
 | `WAITING` | The worker waits on a named condition. | No |
 | `BLOCKED` | The worker or the manager cannot continue without help. | No |
 | `PR_READY` | Pull request checked and ready. | Yes, when the user merges |
-| `MERGING` | Merge checks passed and the merge was requested. | No |
-| `MERGED` | Merged, merge commit recorded. | Yes |
+| `MERGING` | Merge checks passed. The merge, main CI, branch deletion, or settle is not finished, or merging stopped for a user decision. | No |
+| `MERGED` | Merged, merge commit recorded, main CI finished green or none applied, branch handled, thread settled. | Yes |
 | `NOT_NEEDED` | The item no longer applies; the manager accepted the reason. | Yes |
 | `CLOSED` | Stopped on purpose; the reason is recorded. | Yes |
