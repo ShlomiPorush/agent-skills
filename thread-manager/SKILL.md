@@ -90,7 +90,7 @@ A worker sends every state change to the manager with `t3_thread_send`, `mode: "
 | `BLOCKED` | The worker cannot continue, for example because the partner budget gate returned `ask`. |
 | `WAITING` | The worker must end its turn before a result. `for <what>` names the lock, the command and its handle, or the check it waits on. |
 
-Short English details follow the first line. The worker numbers every plan (`plan 1`, then `plan 2` after changes), whatever the plan gate, and puts its current plan number in every status line after its first plan. Only the worker sets `plan`. Only the manager sets `rev`: it starts at `0` and goes up by one with every `REVISED`. The worker puts the highest `rev` it has applied in every status line. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat asks for a fresh send.
+Short English details follow the first line. The worker numbers every plan (`plan 1`, then `plan 2` after changes), whatever the plan gate, and puts its current plan number in every status line after its first plan. Only the worker sets `plan`. Only the manager sets `rev`: it starts at `0` and goes up by one with every `DECISION` and `REVISED`. The worker puts the highest `rev` it has applied in every status line. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat asks for a fresh send.
 
 ### Manager envelope
 
@@ -104,8 +104,8 @@ Every manager message to a worker starts with one envelope line, then short Engl
 |---|---|
 | `APPROVED` | Plan `<n>` is approved. Continue. |
 | `CHANGES` | Plan `<n>` needs the listed changes. Send a new plan number. |
-| `DECISION` | The user decided `D<n>`. The details give the answer. |
-| `REVISED` | The user changed `D<n>`. The envelope carries the new `rev`. Earlier approvals and `PR_READY` for the item are void. Apply the change under a new plan number and report with the new `rev`. |
+| `DECISION` | The user decided `D<n>`. The details list every decision in effect for the item. |
+| `REVISED` | The user changed `D<n>`. The envelope carries the new `rev`, and the details list every decision in effect for the item. Earlier approvals and `PR_READY` for the item are void. Apply the change under a new plan number and report with the new `rev`. |
 | `RESUME` | The condition the worker waited on is gone. Continue. |
 | `REBASE` | Main moved. Rebase on the given main SHA, verify again, report again. |
 | `HOLD` | Do not push to the branch until told otherwise. |
@@ -130,7 +130,7 @@ A message wakes the other side. It does not prove anything by itself.
   1. Read the tracker.
   2. For each running worker, read its thread with a small `t3_thread_read` and list open dialogs with `t3_pending_request list`.
   3. Send `NUDGE` to a worker that is idle and whose latest status did not reach the manager as a checked send, including a status line left only in the worker's own thread. Act only on the checked send that follows.
-     Send the latest `REVISED` again to a worker whose latest report carries a lower `rev` than its row.
+     Send the latest `DECISION` or `REVISED` again to a worker whose latest report carries a lower `rev` than its row.
   4. For each `WAITING` worker, check its `for` condition, and send `RESUME` once the condition is gone: the lock is free, the command ended, or the check finished.
   5. Launch the next wave when a slot is free.
   The heartbeat acts on these fresh reads, not on the tracker alone.
@@ -168,7 +168,7 @@ The lock waits for its turn and releases when the command exits. Never delete th
 - **Product decisions.** A behavior users notice, a new setting, a security or usability trade-off, a gap in a library, or a changed meaning of an existing test is a product decision. When you are unsure, treat it as one. Never decide it silently and never approve it inside a plan.
 - **Ask the user in chat.** Use the user's language. Ask one plain question. Give two or three options, each described by what the user will see. Give one recommendation with its reason. Do not open a dialog. The other workers keep running.
 - **Explain without flip-flopping.** When the user asks for more detail, describe a concrete scenario, not theory. Check the facts before you answer, so that a second explanation does not contradict the first.
-- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, and send it to the worker with `DECISION`. When the user changes a decision, log both answers, raise the row's `rev` by one, set the row back to `RUNNING`, and send `REVISED` with the new `rev`. Any earlier approval or `PR_READY` for the item is void. The worker applies the change under a new plan number and reports again with the new `rev`. Merge only on a `PR_READY` that carries the row's current `rev`. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
+- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, raise the row's `rev` by one, and send it to the worker with `DECISION` and the new `rev`. When the user changes a decision, log both answers, raise the row's `rev` by one, set the row back to `RUNNING`, and send `REVISED` with the new `rev`. Every `DECISION` and `REVISED` lists, in its details, every decision in effect for the item with its current answer, so one delivered message replaces any that were lost. Any earlier approval or `PR_READY` for the item is void. The worker applies the change under a new plan number and reports again with the new `rev`. Merge only on a `PR_READY` that carries the row's current `rev`. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
 
 ## 8. Merge
 

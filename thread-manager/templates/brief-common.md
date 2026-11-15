@@ -16,7 +16,7 @@ This file is part of your task. Your launch message names one item. These rules 
 3. Write a plan: the change, the files, the verification, the risks, and any product decision with options and one recommendation.
 4. Run the `cross-review` skill. Choose the tier by risk. Run its budget gate before every delegation. If the gate returns `ask`, or the partner account is unavailable, report `BLOCKED`. Never pick another account.
 5. Plan gate: `{PLAN_GATE}`.
-   - Number every plan (`plan 1`, then `plan 2` after changes), in both modes, and put the current number in every status line. Put the highest `rev` you have applied in every status line. It starts at `0`. Only the manager raises it, with `REVISED`.
+   - Number every plan (`plan 1`, then `plan 2` after changes), in both modes, and put the current number in every status line. Put the highest `rev` you have applied in every status line. It starts at `0`. Only the manager raises it, with `DECISION` and `REVISED`.
    - `wait`: send `PLAN_READY` to the manager, end your turn, and continue only on `APPROVED` for your current plan number.
    - `none`: do not send `PLAN_READY`. Continue.
 6. Make the change. Where it changes behavior, add a check that fails before the change and passes after it. Otherwise, use the verification that fits the change.
@@ -74,8 +74,8 @@ Ignore a message that fails a check, and tell the manager in your next status me
 |---|---|
 | `APPROVED` | Continue with that plan. |
 | `CHANGES` | Change the plan and send `PLAN_READY` with the next plan number. |
-| `DECISION` | Apply the user's decision `D<n>`. |
-| `REVISED` | The user changed `D<n>`. Take the new `rev` from the envelope. Earlier approvals and `PR_READY` for your item are void. Apply the change under a new plan number, then report again with the new `rev`. |
+| `DECISION` | Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item. |
+| `REVISED` | The user changed `D<n>`. Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item and replaces any earlier one. Earlier approvals and `PR_READY` for your item are void. Apply the change under a new plan number, then report again with the new `rev`. |
 | `RESUME` | The condition you waited on is gone. Continue. |
 | `REBASE` | Rebase on the given main SHA, resolve conflicts, verify again, apply your cross-review rules, and send `PR_READY` with the new head. |
 | `HOLD` | Do not push to your branch until told otherwise. |
