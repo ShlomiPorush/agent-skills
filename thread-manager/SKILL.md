@@ -78,7 +78,7 @@ Launch only up to the concurrency cap. Queue the other items for later waves. Me
 A worker sends every state change to the manager with `t3_thread_send`, `mode: "queue"`, to the manager's real thread id. The first line of the message is fixed English tokens:
 
 ```text
-[<run id>:<item>] <STATUS> | plan <n|none> | pr <url|none> | head <sha|none> | checks <green|failing|pending|none> | tier <solo|review-only|full> | review <resolved|open|none>
+[<run id>:<item>] <STATUS> | plan <n|none> | rev <n> | pr <url|none> | head <sha|none> | checks <green|failing|pending|none> | tier <solo|review-only|full> | review <resolved|open|none>
 ```
 
 | STATUS | Meaning |
@@ -90,14 +90,14 @@ A worker sends every state change to the manager with `t3_thread_send`, `mode: "
 | `BLOCKED` | The worker cannot continue, for example because the partner budget gate returned `ask`. |
 | `WAITING` | The worker must end its turn before a result. `for <what>` names the lock, the command and its handle, or the check it waits on. |
 
-Short English details follow the first line. The worker numbers every plan (`plan 1`, then `plan 2` after changes), whatever the plan gate, and puts its current plan number in every status line after its first plan. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat asks for a fresh send.
+Short English details follow the first line. The worker numbers every plan (`plan 1`, then `plan 2` after changes), whatever the plan gate, and puts its current plan number in every status line after its first plan. Only the worker sets `plan`. Only the manager sets `rev`: it starts at `0` and goes up by one with every `REVISED`. The worker puts the highest `rev` it has applied in every status line. The worker ends its final message in its own thread with the same status line. If the send fails, the worker still ends with the status line, and the heartbeat asks for a fresh send.
 
 ### Manager envelope
 
 Every manager message to a worker starts with one envelope line, then short English details:
 
 ```text
-[manager] [<run id>:<item>] <COMMAND> | plan <n|none> | decision <D<n>|none>
+[manager] [<run id>:<item>] <COMMAND> | plan <n|none> | rev <n> | decision <D<n>|none>
 ```
 
 | COMMAND | Meaning |
@@ -105,7 +105,7 @@ Every manager message to a worker starts with one envelope line, then short Engl
 | `APPROVED` | Plan `<n>` is approved. Continue. |
 | `CHANGES` | Plan `<n>` needs the listed changes. Send a new plan number. |
 | `DECISION` | The user decided `D<n>`. The details give the answer. |
-| `REVISED` | The user changed `D<n>`. Earlier approvals and `PR_READY` for the item are void. Replan or rework under the plan number in the envelope. |
+| `REVISED` | The user changed `D<n>`. The envelope carries the new `rev`. Earlier approvals and `PR_READY` for the item are void. Apply the change under a new plan number and report with the new `rev`. |
 | `RESUME` | The condition the worker waited on is gone. Continue. |
 | `REBASE` | Main moved. Rebase on the given main SHA, verify again, report again. |
 | `HOLD` | Do not push to the branch until told otherwise. |
@@ -115,11 +115,11 @@ Every manager message to a worker starts with one envelope line, then short Engl
 
 A message wakes the other side. It does not prove anything by itself.
 
-- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms three facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, and the plan number is the worker's current plan, the next plan number in a `REVISED`, or `none` before the first plan.
+- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms three facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, the plan number is the worker's current plan or `none` before the first plan, and the `rev` is not lower than the worker's own.
 - The manager, on every worker message:
   1. Matches the `[<run id>:<item>]` tag to a tracker row, and ignores a tag from another run.
   2. Reads the message with `t3_thread_read` and confirms that its `senderThreadId` is that row's worker thread.
-  3. Rejects a report whose plan number is lower than the row's current plan. A report from a superseded plan never restores readiness.
+  3. Rejects a report whose plan number is lower than the row's current plan, or whose `rev` is lower than the row's `rev`. A report made before the latest revision never restores readiness.
   4. For `PR_READY`, rejects `review open`, and accepts `review none` only with `tier solo` and the worker's reason. Then checks the pull request itself with `gh pr view <n> --json number,state,headRefName,headRefOid,baseRefName,statusCheckRollup,mergeable`: the right repository, the branch in the tracker, the default branch as base, the reported head, and every check green.
   5. Only then updates the tracker.
 
@@ -167,14 +167,14 @@ The lock waits for its turn and releases when the command exits. Never delete th
 - **Product decisions.** A behavior users notice, a new setting, a security or usability trade-off, a gap in a library, or a changed meaning of an existing test is a product decision. When you are unsure, treat it as one. Never decide it silently and never approve it inside a plan.
 - **Ask the user in chat.** Use the user's language. Ask one plain question. Give two or three options, each described by what the user will see. Give one recommendation with its reason. Do not open a dialog. The other workers keep running.
 - **Explain without flip-flopping.** When the user asks for more detail, describe a concrete scenario, not theory. Check the facts before you answer, so that a second explanation does not contradict the first.
-- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, and send it to the worker with `DECISION`. When the user changes a decision, log both answers, set the row's current plan to the next plan number, set the row back to `RUNNING`, and send `REVISED` with that plan number. Any earlier approval or `PR_READY` for the item is void. The worker replans or reworks under the new plan number and reports again. Merge only on a `PR_READY` for the new plan. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
+- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, and send it to the worker with `DECISION`. When the user changes a decision, log both answers, raise the row's `rev` by one, set the row back to `RUNNING`, and send `REVISED` with the new `rev`. Any earlier approval or `PR_READY` for the item is void. The worker applies the change under a new plan number and reports again with the new `rev`. Merge only on a `PR_READY` that carries the row's current `rev`. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
 
 ## 8. Merge
 
 Merge only with the user's explicit authorization, given at setup or later in the thread. Merge one pull request at a time, in an order recorded in the tracker. Releases and deploys happen only on an explicit request.
 
 1. **Once per run, check for a merge queue.** Run `gh api --paginate repos/<owner>/<repo>/rules/branches/<default branch>`. If any page lists a `merge_queue` rule, or if the check fails or is incomplete, do not merge. Give the ready pull requests and their reviewed heads to the user.
-2. **Check the pull request.** It is open, mergeable and every check is green. Its head SHA equals the head of the worker's latest checked `PR_READY` for the row's current plan, the reviewed head. Set the row to `MERGING` with the pull request number and that SHA. The row stays `MERGING` until steps 3 to 6 are all done.
+2. **Check the pull request.** It is open, mergeable and every check is green. Its head SHA equals the head of the worker's latest checked `PR_READY` that carries the row's current `rev`, the reviewed head. Set the row to `MERGING` with the pull request number and that SHA. The row stays `MERGING` until steps 3 to 6 are all done.
 3. **Merge.** Run `gh pr merge <n> --match-head-commit <sha>` with the repository's merge method. Never use `--auto`. Confirm with `gh pr view <n> --json state,mergeCommit` that the state is `MERGED`, and record the merge commit. If the state is not `MERGED`, keep the row at `MERGING`, stop merging, and tell the user. Do not merge the next pull request or delete the branch.
 4. **Wait for main CI.**
    1. Find the expected workflows: those in the default branch's `.github/workflows` whose `push` trigger matches the default branch and whose `paths` or `paths-ignore` filters match the files the merge changed.
@@ -204,7 +204,7 @@ Read the tracker, then reconcile before any new action:
 - `heartbeat: creating`: look for the schedule with `list_scheduled_tasks` by its title. Record it, or retry the creation with the same `clientRequestId`.
 - `LAUNCHING`: retry `t3_thread_launch` with the same `clientRequestId`. It returns the thread that was already made. Record it.
 - `RUNNING`: read the worker thread and update the row.
-- `MERGING`: read the pull request. If GitHub shows it merged, record the merge commit and finish the remaining merge steps (main CI, branch, settle) before the next pull request. If the notes say that merging stopped for a user decision, wait for that decision. Otherwise, check the pull request again from step 2 of "Merge".
+- `MERGING`: first read the notes. If merging stopped for a user decision, wait for that decision and do nothing else on the row, whatever GitHub shows. Otherwise read the pull request. If GitHub shows it merged, record the merge commit and finish the remaining merge steps (main CI, branch, settle) before the next pull request. If not, check the pull request again from step 2 of "Merge".
 
 Never start a second worker for an item before its first worker is reconciled.
 

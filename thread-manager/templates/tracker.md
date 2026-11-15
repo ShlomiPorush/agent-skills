@@ -26,9 +26,9 @@ Record the user's answers word for word.
 
 ## Items
 
-| Item | Wave | Thread | Branch | Status | Plan | PR | Reviewed head | Updated (UTC) | Notes |
-|---|---|---|---|---|---|---|---|---|---|
-| | | | | QUEUED | none | | | | |
+| Item | Wave | Thread | Branch | Status | Plan | Rev | PR | Reviewed head | Updated (UTC) | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | QUEUED | none | 0 | | | | |
 
 ## Decisions
 
