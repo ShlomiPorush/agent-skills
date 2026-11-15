@@ -74,8 +74,8 @@ Ignore a message that fails a check, and tell the manager in your next status me
 |---|---|
 | `APPROVED` | Continue with that plan. |
 | `CHANGES` | Change the plan and send `PLAN_READY` with the next plan number. |
-| `DECISION` | Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item. |
-| `REVISED` | The user changed `D<n>`. Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item and replaces any earlier one. Earlier approvals and `PR_READY` for your item are void. Apply the change under a new plan number, then report again with the new `rev`. |
+| `DECISION` | Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item and replaces any earlier one. Earlier approvals and `PR_READY` for your item are void. Apply the decisions under a new plan number, then report again with the new `rev`. With `PLAN_GATE: wait`, send `PLAN_READY` for the new plan and wait for `APPROVED`. |
+| `REVISED` | The user changed `D<n>`. Take the new `rev` from the envelope, and apply every decision the details list. The list is complete for your item and replaces any earlier one. Earlier approvals and `PR_READY` for your item are void. Apply the change under a new plan number, then report again with the new `rev`. With `PLAN_GATE: wait`, send `PLAN_READY` for the new plan and wait for `APPROVED`. |
 | `RESUME` | The condition you waited on is gone. Continue. |
 | `REBASE` | Rebase on the given main SHA, resolve conflicts, verify again, apply your cross-review rules, and send `PR_READY` with the new head. |
 | `HOLD` | Do not push to your branch until told otherwise. |

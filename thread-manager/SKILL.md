@@ -104,7 +104,7 @@ Every manager message to a worker starts with one envelope line, then short Engl
 |---|---|
 | `APPROVED` | Plan `<n>` is approved. Continue. |
 | `CHANGES` | Plan `<n>` needs the listed changes. Send a new plan number. |
-| `DECISION` | The user decided `D<n>`. The details list every decision in effect for the item. |
+| `DECISION` | The user decided `D<n>`. The envelope carries the new `rev`, and the details list every decision in effect for the item. Earlier approvals and `PR_READY` for the item are void. Apply the decisions under a new plan number and report with the new `rev`. |
 | `REVISED` | The user changed `D<n>`. The envelope carries the new `rev`, and the details list every decision in effect for the item. Earlier approvals and `PR_READY` for the item are void. Apply the change under a new plan number and report with the new `rev`. |
 | `RESUME` | The condition the worker waited on is gone. Continue. |
 | `REBASE` | Main moved. Rebase on the given main SHA, verify again, report again. |
@@ -168,7 +168,7 @@ The lock waits for its turn and releases when the command exits. Never delete th
 - **Product decisions.** A behavior users notice, a new setting, a security or usability trade-off, a gap in a library, or a changed meaning of an existing test is a product decision. When you are unsure, treat it as one. Never decide it silently and never approve it inside a plan.
 - **Ask the user in chat.** Use the user's language. Ask one plain question. Give two or three options, each described by what the user will see. Give one recommendation with its reason. Do not open a dialog. The other workers keep running.
 - **Explain without flip-flopping.** When the user asks for more detail, describe a concrete scenario, not theory. Check the facts before you answer, so that a second explanation does not contradict the first.
-- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, raise the row's `rev` by one, and send it to the worker with `DECISION` and the new `rev`. When the user changes a decision, log both answers, raise the row's `rev` by one, set the row back to `RUNNING`, and send `REVISED` with the new `rev`. Every `DECISION` and `REVISED` lists, in its details, every decision in effect for the item with its current answer, so one delivered message replaces any that were lost. Any earlier approval or `PR_READY` for the item is void. The worker applies the change under a new plan number and reports again with the new `rev`. Merge only on a `PR_READY` that carries the row's current `rev`. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
+- **Record and relay.** Give each decision an id (`D1`, `D2`) and a UTC time in the tracker, raise the row's `rev` by one, set the row back to `RUNNING`, and send it to the worker with `DECISION` and the new `rev`. When the user changes a decision, log both answers, raise the row's `rev` by one, set the row back to `RUNNING`, and send `REVISED` with the new `rev`. Every `DECISION` and `REVISED` lists, in its details, every decision in effect for the item with its current answer, so one delivered message replaces any that were lost. Any earlier approval or `PR_READY` for the item is void. The worker applies the change under a new plan number and reports again with the new `rev`. Merge only on a `PR_READY` that carries the row's current `rev`. If the affected item is already `MERGING` or `MERGED`, tell the user at once and wait for direction on that item.
 
 ## 8. Merge
 
