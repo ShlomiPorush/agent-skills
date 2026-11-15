@@ -115,7 +115,12 @@ Every manager message to a worker starts with one envelope line, then short Engl
 
 A message wakes the other side. It does not prove anything by itself.
 
-- The worker acts on a manager message only after it reads the message with `t3_thread_read` and confirms four facts: its `senderThreadId` is the manager thread id in the brief, the envelope names this run and item, the `rev` is not lower than the worker's own, and, for `APPROVED` and `CHANGES` only, the plan number is the worker's current plan. Other commands do not depend on the plan number, so an outdated plan number in them is not a reason to ignore them.
+- The worker reads each manager message in its own thread with `t3_thread_read`. It finds its own thread id as `currentThreadId` in `t3_thread_list`. It acts on the message only when all of these hold:
+  1. The `senderThreadId` is the manager thread id in the brief.
+  2. The envelope names this run and item.
+  3. The `rev` is not lower than the worker's own.
+  4. For `APPROVED` and `CHANGES`, the plan number is the worker's current plan. Other commands do not depend on the plan number, so the worker does not ignore them for an outdated one.
+- A `DECISION` or `REVISED` whose `rev` equals the worker's own is a repeat. The worker does not replan. It answers with its current status line.
 - The manager, on every worker message:
   1. Matches the `[<run id>:<item>]` tag to a tracker row, and ignores a tag from another run.
   2. Reads the message with `t3_thread_read` and confirms that its `senderThreadId` is that row's worker thread.
@@ -125,17 +130,17 @@ A message wakes the other side. It does not prove anything by itself.
 
 ## 5. Keep the manager awake
 
-- **Primary: the worker's push.** The manager ends its turn after launching and after each handled message. A worker's `t3_thread_send` starts the manager's next turn.
-- **Fallback: one heartbeat.** Create one `schedule_task` bound to the manager thread, every 45 to 60 minutes, titled `<run id> heartbeat`, with `clientRequestId` `<run id>-heartbeat`. Write `heartbeat: creating` to the tracker before the call. After a lost reply, retry with the same `clientRequestId`. Record the returned id. The heartbeat prompt tells the manager to:
+- **The worker's push wakes the manager first.** The manager ends its turn after launching and after each handled message. A worker's `t3_thread_send` starts the manager's next turn.
+- **One heartbeat is the fallback.** Create one `schedule_task` bound to the manager thread, every 45 to 60 minutes, titled `<run id> heartbeat`, with `clientRequestId` `<run id>-heartbeat`. Write `heartbeat: creating` to the tracker before the call. After a lost reply, retry with the same `clientRequestId`. Record the returned id. The heartbeat prompt tells the manager to:
   1. Read the tracker.
   2. For each running worker, read its thread with a small `t3_thread_read` and list open dialogs with `t3_pending_request list`.
   3. Send `NUDGE` to a worker that is idle and whose latest status did not reach the manager as a checked send, including a status line left only in the worker's own thread. Act only on the checked send that follows.
-     Send the latest `DECISION` or `REVISED` again to a worker whose latest report carries a lower `rev` than its row.
+     Send the latest `DECISION` or `REVISED` again to an idle worker whose latest report carries a lower `rev` than its row. Do not resend to a worker that is still running, because it may still be applying the change.
   4. For each `WAITING` worker, check its `for` condition, and send `RESUME` once the condition is gone: the lock is free, the command ended, or the check finished.
   5. Launch the next wave when a slot is free.
   The heartbeat acts on these fresh reads, not on the tracker alone.
-- **During merges:** `watch_pull_request` on the pull request being merged.
-- **Not a wake mechanism:** `t3_thread_wait`. A `completed` result only means that a run ended. A worker can end a turn while it waits for a lock. The item is done only when a checked status line says so.
+- **Watch the pull request during a merge.** Use `watch_pull_request` on the pull request being merged.
+- **Do not wait for workers with `t3_thread_wait`.** A `completed` result only means that a run ended. A worker can end a turn while it waits for a lock. The item is done only when a checked status line says so.
 - Do not use polling scripts, sleep loops, `Monitor`, or `gh --watch` to wait for a pull request.
 - **Start every wake with the tracker.** Read the setup answers and the item states first, then act. Before every status report to the user, read the setup answers again instead of relying on memory. This also survives context compaction.
 - **Answer a worker's dialog.** If a worker opened a question despite the brief, answer it with `t3_pending_request respond` within your authority, or with "Send DECISION_NEEDED to the manager and stop". Take a product question to the user in chat.
