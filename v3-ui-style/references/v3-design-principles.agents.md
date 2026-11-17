@@ -168,7 +168,7 @@ Build every page from a small component set. Add a new component only when no ex
 - Times in the application's configured time zone, not the browser's, written by one set of helpers in the date and time formats picked in Settings (24-hour clock by default, numbers instead of month names); a page never formats a date itself, and a test enforces it (FW-9). In lists: time only for today, day and month earlier this year, the whole date before.
 - IDs, addresses and IPs in mono and **click to copy**: faint background and copy icon on hover; copies the full value (not the truncated one); the icon turns into a check for 1.5s; a toast says "Copied: <value>".
 - **Every count is a link** to the list it counts, filtered exactly.
-- **User content keeps its own direction:** `dir="auto"` on the element and the text wrapped in `<bdi>`. Hex colours and other values that start with a neutral character also need an LTR isolate inside RTL text.
+- **User content keeps its own direction:** `dir="auto"` on the element and the text wrapped in `<bdi>`. Hex colours and other values that start with a neutral character also need an LTR isolate inside RTL text. A field the user types an LTR value into (a number, an email address, an IP, a host, a URL) follows RT-6 instead.
 - Escape everything that comes from the server. Country flags are local PNG images, never emoji (Windows shows flag emoji as two letters).
 - **Charts:** prefer simple CSS bars over a chart library when they suffice. Two meaningful colours at most (clean in ink, bad in fail). A chart is a filter: clicking a bar selects it and dims the others to 30%. Sparse time axis: label every third bar, hide minor labels on phones.
 
@@ -181,7 +181,7 @@ Build every page from a small component set. Add a new component only when no ex
 - Persist preferences in `localStorage` (v3 keeps the theme, the collapsed nav and the log viewer's newest-first order). A table's header sort lives in memory: it survives refreshes, not page loads (TB-3).
 - There is no Refresh button: the open page updates by itself, at a pace that fits how often its data changes (30 seconds for most pages, a minute or five minutes for slower data), draws only what changed, and never moves an open item or redraws what the user works in (SV-10, SV-6, SV-13). It runs only while its page is open and stops when leaving; a hidden browser tab reads nothing and catches up once when shown; a read that fails keeps what is shown. Needs attention is the exception: it refreshes on every page, for the header bell (NL-19).
 - Focus: `:focus-visible` with a 2px `--ui-focus` outline and 2px offset. Escape closes the topmost floating layer only, and Back does the same at every width, the phone back gesture included (DS-8, DS-10); a confirm dialog puts the focus on its confirm button, so Enter confirms, but a question that drops work (Discard, Leave) or picks between outcomes puts it on the safe button, so Enter keeps the work; arrow keys move through menus and flyouts.
-- RTL: only logical properties (`margin-inline-start`, `padding-inline-end`, `inset-inline-start`, `border-inline-start`, `text-align: start | end`). Add an explicit `[dir="rtl"]` rule only for things that do not flip by themselves (`translateX` of a switch knob, a directional chevron, a side inset shadow). Test full RTL in the browser; the source project was English only.
+- RTL: only logical properties (`margin-inline-start`, `padding-inline-end`, `inset-inline-start`, `border-inline-start`, `text-align: start | end`). Add an explicit RTL rule only for things that do not flip by themselves (`translateX` of a switch knob, a directional chevron, a side inset shadow, and a field whose value is LTR by nature: numbers, email addresses, IPs, hosts, URLs keep `dir="ltr"` and align right under RTL through one shared `:dir(rtl)` rule, RT-6). Test full RTL in the browser; the source project was English only.
 
 ## Copy
 
@@ -337,7 +337,7 @@ Browser and platform traps that cost v3 a fix. Check new code against them.
 - [ ] Picker and menu panels are placed as MP-5 says at every width; on a phone none is a bottom sheet or a docked panel
 - [ ] List filters follow MP-1 (drop-downs with counts as option hints; chips only where MP-1 allows them); a list page has no KPI row of its own counts (TB-17)
 - [ ] The product's own logo where OT-14 places it, never a generic icon
-- [ ] Logical properties only; user values have `dir="auto"`
+- [ ] Logical properties only; user text of unknown direction has `dir="auto"`; fields with an LTR value (numbers, email addresses, IPs, hosts, URLs) have `dir="ltr"` and align right under RTL (RT-6)
 - [ ] Numbers use tabular figures and thousands separators (a network's size excepted, FW-3); dates and times use the app time zone and go through the format helpers
 - [ ] IDs and addresses in mono with click to copy
 - [ ] Page state is in the URL
