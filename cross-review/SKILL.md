@@ -30,6 +30,8 @@ The user's words win over the table: "without partner" means Solo, and "with par
 
 Run the gate before every `delegate_task` call, not once per task. Plan and result reviews can be hours apart.
 
+A Full-tier plan states the simplest design that delivers the required behavior, and lists every mechanism that goes beyond it, each with its real route to failure. A mechanism is something such as an extra state file or copy, a lock, a flag, a retry, a journal, a backup, or a state the user can get stuck in.
+
 When presenting a revised plan for approval, present the full revised plan, not the changes since the earlier version.
 
 ## Choose the partner
@@ -88,11 +90,11 @@ The partner gets only the task text, with no history from this thread. Make ever
 5. Read-only rules: "Do not edit files, commit, push, or run commands that change state. Report only."
 6. What to return:
    - Each finding with an id, a severity (see "Severity"), its location, its impact, and the condition under which it fails.
-   - Code, tests, guards, or options the goal does not need. Unneeded additions are findings too.
    - Risks, better alternatives, and evidence still needed. Do not ask for approval, ask for problems.
    - What the partner checked and what it did not check.
-7. Always: "For each finding, say whether a simpler design would remove the whole class of problem, and describe it. Prefer that over a guard. Flag every lock, retry, guard, or option in the change that the goal does not need." For a sensitive change (see "Severity"), also: "Look for defects in rare states that real users, callers, external input, or stored data can reach: partial failure, retries, concurrency, interrupted runs, old data, and permission edges. For each, describe the concrete route. A case with no such route is a `nit`."
-8. Always: "A tracked working value for a secret-like setting, such as a password, key, token, signing or encryption secret, or connection string with credentials, is a `blocker`, whatever its label (fake, dev-only, test, not a secret), its binding (loopback only), or its claimed impact. A file elsewhere that does the same is not a precedent."
+7. Always: "For each finding, say whether a simpler design would remove the whole class of problem, and describe it. Prefer that over a guard." In a plan review, also: "Check the plan's list of mechanisms beyond the simplest design. Flag each one without a real route to failure, and each mechanism the plan adds but does not list." For a sensitive change (see "Severity"), also: "Look for defects in rare states that real users, callers, external input, or stored data can reach: partial failure, retries, concurrency, interrupted runs, old data, and permission edges. For each, describe the concrete route. A case with no such route is a `nit`."
+8. In the simplicity pass only (see "Rounds and disagreement"), a simplicity section: "Propose only removals, never new code, guards, or tests. Judge by concept, not by line. Report a mechanism or a piece of user friction, such as a dead-end state, that the goal does not need, when removing it drops the whole concept. Report a helper, parameter, or similar small item only when it sits in lines this change wrote. Report code that still handles a case the ledger closed as an accepted risk. Report comments that break this rule: <the user's comment rule, or by default: a comment only explains why code exists when the code cannot show it, and never narrates the code or restates a name>; a doc comment that only restates a signature breaks it. Mark each finding as inside or outside the area this change touches."
+9. Always: "A tracked working value for a secret-like setting, such as a password, key, token, signing or encryption secret, or connection string with credentials, is a `blocker`, whatever its label (fake, dev-only, test, not a secret), its binding (loopback only), or its claimed impact. A file elsewhere that does the same is not a precedent."
    When the plan or diff sets up or changes a runtime, development, test, or CI environment, or touches secret-like settings, also: "Check that it says how the stack gets each secret. Treat a gap in that, or a breach of any of the following, as a `blocker`: environment files are tracked only as examples; secrets come from a cryptographically secure random generator, in development once into an ignored owner-only file that is never overwritten, and in test and CI for each run; credentials for external services come from a secret store; the stack refuses to start when a secret is missing or equals a placeholder; a value that was ever committed is public and is never reused, even after it moves to an ignored file, and the user is told it must be replaced wherever it is still in use."
 
 ## Severity
@@ -132,7 +134,8 @@ For every material finding, take the first step that resolves it:
 2. **Narrow or delete.** Remove the code path, option, or state that
    produces the failure.
 3. **Accept the risk.** When no real user, caller, or stored data can
-   reach the case, write one line in the report and change nothing.
+   reach the case, write one line in the report and delete the code
+   that handles that case.
 4. **Add a mechanism.** A lock, retry, guard, cache, or new dependency,
    only for security or data integrity, and only when the case has a
    concrete route through normal use or a realistic mistake.
@@ -156,7 +159,8 @@ not escalate it to the user.
 ## Rounds and disagreement
 
 - Round budget per review (plan or result): up to 2 at the Review-only tier, up to 3 at the Full tier.
-- The review ends when every material finding is `resolved`, `declined`, or decided by the main agent, and no behavior-changing fix waits for review. Otherwise start another round while budget remains.
+- The review ends when every material finding is `resolved`, `declined`, or decided by the main agent, no behavior-changing fix waits for review, and, in a result review, the simplicity pass has run. Otherwise start another round while budget remains.
+- The simplicity pass runs exactly once per result review, in its last round: the last round of the budget, or an earlier round that the main agent expects to end the review. It uses the existing budget and never adds a round. The main agent answers each of its findings in one line, applied or why not, and acts only inside the area the change touches. Findings elsewhere, even in a touched file, and simplicity findings raised after the pass go on a list for the user, not into code. Removals from the pass need no new round. The aim is a merge simpler than before, not a perfect one.
 - A fix changes behavior when it changes code paths or data, or, in instructions and skills, what an agent does, may do, or decides. Purely editorial fixes need no new round.
 - A dispute exchange is the main agent's reply with evidence, plus the partner's verdict on it in the next round. A disagreement the partner keeps after one exchange is decided by the main agent, which records both positions in one line. Only a disagreement about a product decision, as the user's instructions define it, goes to the user.
 - When the round budget runs out, stop delegating. The main agent decides every open finding by the fix ladder and lists the remaining ones, one line each, in the report. Running out of budget is never a reason to ask the user, and never an automatic approval of an unreviewed security fix: say plainly which security fix the partner did not see.
@@ -180,5 +184,5 @@ Order:
 1. Outcome: what changed and what it does now, in a few lines.
 2. Verification: what was checked and how, and what was not checked.
 3. Decisions for the user: only product decisions, each with one recommendation.
-4. Leftovers: uncommitted files, skipped checks, manual steps.
+4. Leftovers: uncommitted files, skipped checks, manual steps, and the list of simplicity findings left out of this change.
 5. Review summary, kept short: tier, partner instance and model, gate result, number of rounds, and change size before and after a result review. Do not show finding ids to the user; describe at most the few findings that changed the result, one line each.
