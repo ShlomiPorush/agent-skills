@@ -28,6 +28,7 @@ This skill uses `cross-review` for the partner, and the user's fix ladder and co
 
 - **Branch or pull request.** The scope is the diff from the merge base with the target branch, with uncommitted and untracked work.
 - **Existing project on its default branch.** Do the survey first. The user then picks one area, and that area is the scope. Never simplify a whole project in one run.
+- **README.** In an existing project, the run also brings the README to [the README format](references/readme-format.md), as a separate change. The user can ask for the README alone. The steps are then the same, with a verdict for each section and question 3 of the check. On a branch, change only what the README says about the scope.
 
 ### Survey an existing project
 
@@ -72,7 +73,7 @@ Write the facts that the verdicts rest on, such as how many instances run or whi
 |---|---|---|
 | Keep | It has a real route that nothing simpler covers. | Nothing. |
 | Redesign | A simpler flow or data model makes the case impossible. | Replaces the mechanism. The plan names what the old one told apart. |
-| Delete | It has no route. | Removes the code, its states, settings, messages, and tests. |
+| Delete | It has no route. | Removes the code, its states, settings, messages, tests, and documentation. |
 | Accept the risk | It has a route, but the case is rare and its result is tolerable. | The same as delete. The plan names the result that a user can get. |
 
 > 7. Stored copy of the labels. Route: the label query fails while the rest of the page loads. Accept the risk: the page shows ids until the next load. Delete the copy, its refresh, and their tests.

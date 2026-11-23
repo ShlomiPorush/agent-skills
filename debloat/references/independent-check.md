@@ -24,7 +24,7 @@ For each lost distinction, find the input or sequence that reaches it and follow
 
 ## 3. Comments
 
-Extract every deleted or shortened comment from the diff with a command, file by file, and judge each one. Include comments on code that the branch itself added. Reasons get lost there most often. A reason names a concrete failure, limit, order, or intended behavior that looks like a mistake. Report each reason that is gone while its code is still there, and each comment whose new text is wrong. Quote the old text.
+Extract every deleted or shortened comment from the diff with a command, file by file, and judge each one. Include comments on code that the branch itself added. Reasons get lost there most often. A reason names a concrete failure, limit, order, or intended behavior that looks like a mistake. Report each reason that is gone while its code is still there, and each comment whose new text is wrong. Quote the old text. Treat a warning, limit, requirement, or command that the documentation lost in the same way, and report documentation that is no longer true.
 
 ## 4. Client side
 
