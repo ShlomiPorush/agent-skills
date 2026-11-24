@@ -1,11 +1,11 @@
 ---
 name: debloat
-description: Find over-engineering in existing code, in a whole project or in a change such as a branch or a pull request, and replace it with what the problem needs, while the product stays the same. Can also bring a README to a fixed format when asked. Use only when the user explicitly asks to debloat or to remove over-engineering. Never start it on your own, and do not use it for ordinary cleanup, refactoring, or code review.
+description: Find over-engineering in existing code, in a whole project or in a change such as a branch or a pull request, and replace it with what the problem needs, while the product stays the same. Also cleans needless comments, and can bring a README to a fixed format when asked. Use only when the user explicitly asks to debloat or to remove over-engineering. Never start it on your own, and do not use it for ordinary cleanup, refactoring, or code review.
 ---
 
 # Debloat
 
-Find the mechanisms that are over-engineered, and bring each one down to what its problem needs. The product, its security, and its data integrity stay the same.
+Find the mechanisms that are over-engineered, and bring each one down to what its problem needs. The product, its security, and its data integrity stay the same. Every run also cleans the comments.
 
 **Over-engineering** is a mechanism that is more complex than the problem it solves, or that solves a problem with no real route to failure. A feature, a setting, a screen, or another capability of the product is not over-engineering, however large it is. The amount of code is neither the goal nor evidence. A small mechanism can be excessive, and a large one can be justified.
 
@@ -15,7 +15,7 @@ This skill uses `cross-review` for the partner, and the user's fix ladder and co
 
 - Partner: none.
 - Ladder: design the case away, or delete the mechanism, or accept the risk. Add a mechanism only for security or data integrity with a real route to failure.
-- Comments: a comment only explains why code exists when the code cannot show it. The reason in an existing comment stays while its code stays.
+- Comments: the rule in step 3.
 
 ## Rules for the whole run
 
@@ -49,7 +49,7 @@ If the request does not state the scope, look at the branch, the open pull reque
    ```
 
 2. Run the project's checks, and keep the commands and the results for the report.
-3. Write the "must not weaken" list from recorded product decisions, security, and data integrity. When a verdict depends on a decision that you cannot find, the verdict is Keep.
+3. Write the "must not weaken" list from recorded product decisions, security, and data integrity. When a verdict depends on a decision that you cannot find, the verdict is Keep, except for the rows of step 2.
 
 ## 2. Plan the mechanisms
 
@@ -59,7 +59,7 @@ Write the facts that the verdicts rest on, such as how many instances run or whi
 2. What is the simple or common solution to that problem?
 3. What in the mechanism exceeds that solution?
 
-If you cannot name the excess, the verdict is Keep. "It can go" and "the code gets shorter" are not reasons.
+If you cannot name the excess, or if its harm is low and the risk of the change is not, the verdict is Keep. "It can go" and "the code gets shorter" are not reasons, and a rule that appears twice is not over-engineering by itself.
 
 | Verdict | When | What the run does |
 |---|---|---|
@@ -67,17 +67,23 @@ If you cannot name the excess, the verdict is Keep. "It can go" and "the code ge
 | Delete | The problem has no route. | Deletes the mechanism and what serves only it, such as its states, tests, and documentation. |
 | Accept the risk | The mechanism exists only for a rare case, and the outcome without it is tolerable. Not for giving up behavior that works. | The same as delete. The plan names the outcome. |
 
-Add a short Keep list for what looks excessive and is not. Leave out the other mechanisms and the reports of the scan.
+Add a short Keep list for what looks excessive and is not. Group tiny items into one item for each area, without those that have no real excess. Leave out the other mechanisms and the reports of the scan.
 
-Never accept a risk to security or data integrity that has a real route. One-time code has no route only when the oldest version that users can still upgrade or restore from no longer needs it. Check that no verdict rests on something that another verdict deletes, such as a gate that is safe only because of a flag.
+Never accept a risk to security or data integrity that has a real route. Check that no verdict rests on something that another verdict deletes, such as a gate that is safe only because of a flag.
 
-Decide everything yourself, except in two cases: the excess cannot go without a change in what users see or a deletion of data, or the mechanism is a written decision of the user, such as a standard or a skill that they adopted. Each of these is a row for the user, with a recommendation. Most runs have few rows or none.
+Decide everything yourself, except in these cases. Each one is a row for the user, with a recommendation, and most runs have few or none:
+
+- The excess cannot go without a deletion of data, or a change that users would notice.
+- The mechanism is a written decision of the user, such as a standard or a skill that they adopted.
+- The only route of one-time code is an upgrade or a restore from an old version. Ask which version is the oldest still in use.
 
 Write the plan to a file outside the tracked files. List the bugs that you saw separately, and do not fix them. Have the partner review the plan. Then ask the user one question with the rows, whether to commit, and a link to the plan. The answer starts the run.
 
 ## 3. Simplify once
 
 Carry out the approved verdicts. Keep the tests of kept behavior, and do not change what they assert. When the code proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
+
+Then clean the comments in the files that the run changed, by the user's rule or by this one. Delete a comment, also a doc comment, that narrates the code or restates a name. Keep a reason while its code stays, and shorten it when you can. Remove review ids, but keep the id of a requirement or a design rule. Keep an instruction to a tool, such as a lint or type suppression, a license, a build flag, or text that a tool generates documentation from. Leave a comment that excuses a weakness of our own code as it is, and report it as a candidate. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell, check the history of the line. If that does not settle it, keep the comment and report it.
 
 Run the project's checks and the partner's result review. Then save `refs/backup/<scope>-after` with the commands of step 1.
 
@@ -108,5 +114,5 @@ A correct finding is not a reason to add code. When only a new mechanism or a la
 - Any approved change in what users see.
 - What the independent check found, and what was fixed.
 - Product decisions that wait for the user, and the bugs that were seen and not fixed.
-- What was not checked, what stayed open, and the over-engineering seen outside the scope.
+- What was not checked, what stayed open, the comments in doubt, the comments that excuse code, and the over-engineering seen outside the scope.
 - The backup refs. They stay until the user approves the result.
