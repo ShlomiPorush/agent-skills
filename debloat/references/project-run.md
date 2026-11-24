@@ -37,7 +37,7 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 
 The comments are an area of every project run, over all its code and test files. The other areas leave to it the comment step of step 3 and the second part of question 3 of the check. It has no rows for the user, and its commits change only comments, with one commit for each area of the project. Split it between subagents by directory, because directories do not overlap.
 
-- Do not only rewrap a comment, and do not copy one into a document.
+- Do not only rewrap a comment.
 - Do not change generated code, third-party code, or migrations that were already applied.
 - For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. A JSX comment, `{/* */}`, is a comment and not code, so leave it out on both sides, with the whitespace that JSX drops. Reject every file that differs.
 - The independent check is question 3 alone.

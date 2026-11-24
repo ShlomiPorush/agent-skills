@@ -83,9 +83,9 @@ Write the plan to a file outside the tracked files. List the bugs that you saw s
 
 Carry out the approved verdicts. Keep the tests of kept behavior, and do not change what they assert. When the code proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
 
-Then clean the comments by the user's rule or by this one: no comments in code, which includes tests and doc comments. Two kinds stay. The first is text that a tool or a license requires in that place, such as a lint or type suppression, a shebang, a build flag, or text that a tool generates documentation from. The second is one line that says what would break, when the code looks like a mistake, changing it would break something, no test would fail, and no name can say it. Shorten a longer reason that meets these conditions to that line. Configuration files, environment files, and the settings section of a script are exempt.
+Then clean the comments by the user's rule or by this one: no comments in code, which includes tests and doc comments. Two kinds stay. The first is text that a tool or a license requires in that place, such as a lint or type suppression, a shebang, a build flag, or text that a tool generates documentation from. The second is one line that says what would break, when the code looks like a mistake, changing it would break something, no test would fail, and no name can say it. Shorten a longer reason that meets these conditions to that line. Configuration files, environment files, and the settings section of a script are exempt: a comment there may explain a setting. Do not copy a comment into a document, or add code only to carry its reason.
 
-In a change, clean only the code that its diff or the run changed. A comment that excuses a weakness of our own code gets no exception: keep it only when it meets the rule, and report the weakness. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell whether the rule allows a comment, check the history of its line. If that does not settle it, keep the comment and report it.
+In a change, clean only the code that its diff or the run changed. A comment that excuses a weakness of our own code gets no exception: keep it only when it meets the rule, and report the weakness. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell whether the rule allows a comment, check the history of its line. If that does not settle it, delete the comment and report it.
 
 Run the project's checks and the partner's result review. Then save `refs/backup/<scope>-after` with the commands of step 1.
 
@@ -96,7 +96,7 @@ Give the check to an agent with a clean context that took no part in the run. Fo
 - The path of [the check brief](references/independent-check.md), which it reads itself.
 - The repository, the two refs, and the scope.
 - The "must not weaken" list.
-- For question 3, the comment rule and the code that the comment step covered.
+- For question 3, the comment rule and the code that the comment step must cover.
 
 Do not pass the plan, your summary, or the review results. They tell the checker what to believe. If no such agent is available, report that the check is missing.
 
