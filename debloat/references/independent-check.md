@@ -24,7 +24,12 @@ For each lost distinction, find the input or sequence that reaches it and follow
 
 ## 3. Comments
 
-Extract every deleted or shortened comment from the diff with a command, file by file, and judge each one. Include comments on code that the branch itself added. Reasons get lost there most often. A reason names a concrete failure, limit, order, or intended behavior that looks like a mistake. Report each reason that is gone while its code is still there, each lost instruction to a tool, and each comment whose new text is wrong. Quote the old text. Treat a warning, limit, requirement, or command that the documentation lost in the same way, and report documentation that is no longer true.
+Judge the comments by the comment rule that you were given. Extract them with a command, file by file, and judge each one:
+
+1. Every deleted or shortened comment in the diff, also on code that the branch itself added. Reasons get lost there most often. Report each reason or instruction to a tool that the rule allows and that is gone while its code is still there, and each comment whose new text is wrong. Quote the old text.
+2. Every comment in AFTER, in the code that the comment step covered. Report each one that the rule forbids, also when BEFORE already had it.
+
+Treat a warning, limit, requirement, or command that the documentation lost as a finding too, and report documentation that is no longer true.
 
 ## 4. Client side
 
@@ -36,6 +41,6 @@ For every view, form, and client request that the change touches or that uses a 
 
 ## What to return
 
-Rank the findings by their result for security, data, and the user, with the worst first. List the lost comment reasons separately at the end.
+Rank the findings by their result for security, data, and the user, with the worst first. List the comment findings separately at the end.
 
-For each finding: the location in BEFORE and in AFTER, the concrete route that reaches it, the result, and whether you ran it or traced it. Drop a finding that has no route. A lost comment reason needs no route. Then say, for each question, which files you covered and which you did not.
+For each finding: the location in BEFORE and in AFTER, the concrete route that reaches it, the result, and whether you ran it or traced it. Drop a finding that has no route. A comment finding needs no route. Then say, for each question, which files you covered and which you did not.

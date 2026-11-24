@@ -20,7 +20,7 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 - The same logic in two places, when keeping them matched has caused bugs.
 - One-time migration or repair code that still runs.
 - Checks for data that only a hand edit can produce.
-- A comment that excuses a weakness of our own code: an accepted risk, the safe side, rare, at most, can still, a moment later, must match, never happens, or an order that only the comment guards. Read for the meaning, not the words, and ask which design would make the comment unnecessary. When a simpler one does, the mechanism goes through the test like any other, and the comment goes with it. Otherwise the comment is a reason and stays. A reason from outside the code, such as a platform, a library, a standard, a decision of the user, or a third-party bug, is not a lead.
+- A comment that excuses a weakness of our own code: an accepted risk, the safe side, rare, at most, can still, a moment later, must match, never happens, or an order that only the comment guards. Read for the meaning, not the words, and ask which design would make the comment unnecessary. When a simpler one does, the mechanism goes through the test like any other, and the comment goes with it. Otherwise step 3 of the skill decides about the comment. A reason from outside the code, such as a platform, a library, a standard, a decision of the user, or a third-party bug, is not a lead.
 - Review ids in comments, which mark code that a review round added.
 - Squashed commits whose body records review rounds.
 
@@ -35,7 +35,9 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 
 ## Clean the comments
 
-The comments are an area of every project run, over all its code and test files. The other areas leave the comment step of step 3 to it. It has no rows for the user, and its commits change only comments, with one commit for each area of the project. Split it between subagents by directory, because directories do not overlap.
+The comments are an area of every project run, over all its code and test files. The other areas leave to it the comment step of step 3 and the second part of question 3 of the check. It has no rows for the user, and its commits change only comments, with one commit for each area of the project. Split it between subagents by directory, because directories do not overlap.
 
-- For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. Reject every file that differs.
+- Do not only rewrap a comment, and do not copy one into a document.
+- Do not change generated code, third-party code, or migrations that were already applied.
+- For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. A JSX comment, `{/* */}`, is a comment and not code, so leave it out on both sides, with the whitespace that JSX drops. Reject every file that differs.
 - The independent check is question 3 alone.
