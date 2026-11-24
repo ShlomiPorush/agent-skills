@@ -83,7 +83,9 @@ Write the plan to a file outside the tracked files. List the bugs that you saw s
 
 Carry out the approved verdicts. Keep the tests of kept behavior, and do not change what they assert. When the code proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
 
-Then clean the comments in the files that the run changed, by the user's rule or by this one. Delete a comment, also a doc comment, that narrates the code or restates a name. Keep a reason while its code stays, and shorten it when you can. Remove review ids, but keep the id of a requirement or a design rule. Keep an instruction to a tool, such as a lint or type suppression, a license, a build flag, or text that a tool generates documentation from. Leave a comment that excuses a weakness of our own code as it is, and report it as a candidate. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell, check the history of the line. If that does not settle it, keep the comment and report it.
+Then clean the comments by the user's rule or by this one: no comments in code, which includes tests and doc comments. Two kinds stay. The first is text that a tool or a license requires in that place, such as a lint or type suppression, a shebang, a build flag, or text that a tool generates documentation from. The second is one line that says what would break, when the code looks like a mistake, changing it would break something, no test would fail, and no name can say it. Shorten a longer reason that meets these conditions to that line. Configuration files, environment files, and the settings section of a script are exempt: a comment there may explain a setting. Do not copy a comment into a document, or add code only to carry its reason.
+
+In a change, clean only the code that its diff or the run changed. A comment that excuses a weakness of our own code gets no exception: keep it only when it meets the rule, and report the weakness. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell whether the rule allows a comment, check the history of its line. If that does not settle it, delete the comment and report it.
 
 Run the project's checks and the partner's result review. Then save `refs/backup/<scope>-after` with the commands of step 1.
 
@@ -94,6 +96,7 @@ Give the check to an agent with a clean context that took no part in the run. Fo
 - The path of [the check brief](references/independent-check.md), which it reads itself.
 - The repository, the two refs, and the scope.
 - The "must not weaken" list.
+- For question 3, the comment rule and the code that the comment step must cover.
 
 Do not pass the plan, your summary, or the review results. They tell the checker what to believe. If no such agent is available, report that the check is missing.
 
@@ -101,7 +104,7 @@ Do not pass the plan, your summary, or the review results. They tell the checker
 
 1. Go through every finding, because the checker's ranking is not reliable, and confirm it in the code. The checker does not know the accepted risks, so expect findings about them. Reject one as accepted only when an approved verdict names the same route and the same outcome.
 2. Reproduce each regression with a test or a temporary script that fails before the fix.
-3. Resolve each finding by the ladder, at exactly the confirmed locations and nothing else. Prefer a fix that adds nothing, or that restores the earlier behavior. Restore each lost reason in one short comment.
+3. Resolve each finding by the ladder, at exactly the confirmed locations and nothing else. Prefer a fix that adds nothing, or that restores the earlier behavior. For comments, restore only what the comment rule allows, and delete what it forbids.
 4. Run the project's checks. The fix is its own change under `cross-review`.
 5. Save `refs/backup/<scope>-final`.
 
@@ -114,5 +117,5 @@ A correct finding is not a reason to add code. When only a new mechanism or a la
 - Any approved change in what users see.
 - What the independent check found, and what was fixed.
 - Product decisions that wait for the user, and the bugs that were seen and not fixed.
-- What was not checked, what stayed open, the comments in doubt, the comments that excuse code, and the over-engineering seen outside the scope.
+- What was not checked, what stayed open, the comments in doubt, the weaknesses that comments excused, and the over-engineering seen outside the scope.
 - The backup refs. They stay until the user approves the result.
