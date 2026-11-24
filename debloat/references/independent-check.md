@@ -8,7 +8,7 @@ List the changed product files first, and go through all of them. Follow a chang
 
 ## 1. Deleted code
 
-For every deleted function, route, branch, guard, and cleanup, name the reachable case that it handled, and find where AFTER handles that case. Start with the error paths. For each `catch`, `finally`, early return, and timeout, list what was already acquired or registered at that point, and say who releases it now.
+For every deleted function, route, branch, guard, and cleanup, name the reachable case that it handled, if there is one, and find where AFTER handles that case. Start with the error paths. For each `catch`, `finally`, early return, and timeout, list what was already acquired or registered at that point, and say who releases it now. Report every feature, setting, or screen that is gone or works worse.
 
 ## 2. Replaced mechanisms
 
