@@ -1,4 +1,4 @@
 interface:
   display_name: "Debloat"
-  short_description: "Remove over-engineered mechanisms from existing code"
-  default_prompt: "Use $debloat to remove over-engineering from this branch or project."
+  short_description: "Find over-engineering and replace it with what the problem needs"
+  default_prompt: "Use $debloat to find over-engineering in this branch or project and keep the product the same."
