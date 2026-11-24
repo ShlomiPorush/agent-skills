@@ -26,7 +26,7 @@ For each lost distinction, find the input or sequence that reaches it and follow
 
 Judge the comments by the comment rule that you were given. Extract them with a command, file by file, and judge each one:
 
-1. Every deleted or shortened comment in the diff, also on code that the branch itself added. Report each reason or required text that the rule allows and that is gone while its code is still there, and each comment whose new text is wrong. Quote the old text.
+1. Every deleted or shortened comment in the diff, also on code that the branch itself added. Report everything that the rule allows and that is gone while its code or setting is still there, and each comment whose new text is wrong. Quote the old text.
 2. Every comment in AFTER, in the code that the comment step must cover, also in files that did not change. Report each one that the rule forbids, also when BEFORE already had it.
 
 Treat a warning, limit, requirement, or command that the documentation lost as a finding too, and report documentation that is no longer true.
