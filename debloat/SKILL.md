@@ -83,7 +83,7 @@ Write the plan to a file outside the tracked files. List the bugs that you saw s
 
 Carry out the approved verdicts. Keep the tests of kept behavior, and do not change what they assert. When the code proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
 
-Then clean the comments in the files that the run changed, by the user's rule or by this one. Delete a comment, also a doc comment, that narrates the code or restates a name. Keep a reason while its code stays, and shorten it when you can. Remove review ids, but keep the id of a requirement or a design rule. Keep an instruction to a tool, such as a lint or type suppression, a license, a build flag, or text that a tool generates documentation from. When you cannot tell, check the history of the line. If that does not settle it, keep the comment and report it.
+Then clean the comments in the files that the run changed, by the user's rule or by this one. Delete a comment, also a doc comment, that narrates the code or restates a name. Keep a reason while its code stays, and shorten it when you can. Remove review ids, but keep the id of a requirement or a design rule. Keep an instruction to a tool, such as a lint or type suppression, a license, a build flag, or text that a tool generates documentation from. Leave a comment that excuses a weakness of our own code as it is, and report it as a candidate. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell, check the history of the line. If that does not settle it, keep the comment and report it.
 
 Run the project's checks and the partner's result review. Then save `refs/backup/<scope>-after` with the commands of step 1.
 
@@ -114,5 +114,5 @@ A correct finding is not a reason to add code. When only a new mechanism or a la
 - Any approved change in what users see.
 - What the independent check found, and what was fixed.
 - Product decisions that wait for the user, and the bugs that were seen and not fixed.
-- What was not checked, what stayed open, the comments in doubt, and the over-engineering seen outside the scope.
+- What was not checked, what stayed open, the comments in doubt, the comments that excuse code, and the over-engineering seen outside the scope.
 - The backup refs. They stay until the user approves the result.

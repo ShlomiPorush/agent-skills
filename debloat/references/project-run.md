@@ -20,6 +20,7 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 - The same logic in two places, when keeping them matched has caused bugs.
 - One-time migration or repair code that still runs.
 - Checks for data that only a hand edit can produce.
+- A comment that excuses a weakness of our own code: an accepted risk, the safe side, rare, at most, can still, a moment later, must match, never happens, or an order that only the comment guards. Read for the meaning, not the words, and ask which design would make the comment unnecessary. When a simpler one does, the mechanism goes through the test like any other, and the comment goes with it. Otherwise the comment is a reason and stays. A reason from outside the code, such as a platform, a library, a standard, a decision of the user, or a third-party bug, is not a lead.
 - Review ids in comments, which mark code that a review round added.
 - Squashed commits whose body records review rounds.
 
