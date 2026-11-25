@@ -5,11 +5,11 @@ One request, one approval, and one report. The main agent splits the project int
 ## Survey and plan
 
 1. Split the project into areas, such as a feature or a subsystem. Look first where the history shows repeated fixes. Write the "must not weaken" list for the whole project.
-2. Have subagents scan the areas in parallel, read-only, with the definition and the test of the skill and the leads below. Each one returns the excessive mechanisms with their locations, the answers to the test, and the existing tests, and a short Keep list.
+2. Have subagents scan the areas in parallel, read-only, with the definition, the comment leads, and the test of the skill, and the leads below. Each one returns the excessive mechanisms with their locations, the answers to the test, and the existing tests, a short Keep list, and all the comment leads of its area, not examples.
 3. Merge the duplicates between the scans, and confirm in the code every claim that the plan rests on.
 4. Write one plan (step 2 of the skill) for all areas, ranked by the harm that the excess does (bugs and repeated fixes in the mechanism, states that leave a user stuck, code that is hard to change) against the risk of the change. Put verdicts that depend on each other in one area, so that they succeed or drop out together. Mark the security areas, and the areas that change the same files, the schema, or the migrations. Each security area is a row in the question to the user.
 
-A request for a survey alone runs no tests, creates no refs, and ends with the plan and its rows, without the partner. It covers the comments in a sentence or two, with a few examples of each kind and no counts.
+A request for a survey alone runs no tests, creates no refs, and ends with the plan and its rows, without the partner. Only there, the scan returns a few examples of each kind of comment instead of all the comment leads, and the answer covers the comments in a sentence or two, without counts.
 
 Leads, not verdicts. Read the code and the commit that added it, because some of these mechanisms fixed a real bug:
 
@@ -20,24 +20,26 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 - The same logic in two places, when keeping them matched has caused bugs.
 - One-time migration or repair code that still runs.
 - Checks for data that only a hand edit can produce.
-- A comment that excuses a weakness of our own code: an accepted risk, the safe side, rare, at most, can still, a moment later, must match, never happens, or an order that only the comment guards. Read for the meaning, not the words, and ask which design would make the comment unnecessary. When a simpler one does, the mechanism goes through the test like any other, and the comment goes with it. Otherwise step 3 of the skill decides about the comment. A reason from outside the code, such as a platform, a library, a standard, a decision of the user, or a third-party bug, is not a lead.
+- A comment that excuses a weakness of our own code (step 2 of the skill).
 - Review ids in comments, which mark code that a review round added.
 - Squashed commits whose body records review rounds.
 
 ## Run the areas
 
 1. Create a worktree for the combined result, and take the baseline there (step 1 of the skill).
-2. Give each approved area to its own subagent in its own worktree, for steps 1 and 3. A clean agent does step 4, and the area's subagent does step 5. The main agent requests the partner reviews on the area's worktree, at the tier that `cross-review` gives each area. A new product decision waits for the report, and its verdict is left out.
+2. Give each approved area to its own subagent in its own worktree, for steps 1 and 3. Where the skill runs the project's checks, an area runs only the focused tests of the code that it changes. A clean agent does step 4, and the area's subagent does step 5. The main agent requests the partner reviews on the area's worktree, at the tier that `cross-review` gives each area. A new product decision waits for the report, and its verdict is left out.
 3. Areas that change the same files, the schema, or the migrations do not run in parallel. Each one starts from the combined result so far. Security areas run after the others, then the comments, then the README.
-4. Combine the areas one by one, and run all the project's checks after each one. Keep one commit for each area if the user approved commits, and otherwise one local ref.
-5. Take out an area whose checks stay red, go back to the result before it, and report it. The other areas go on.
-6. Write one report (step 6 of the skill), with the checks on the combined result. List the worktrees that remain.
+4. Combine the areas one by one. Keep one commit for each area if the user approved commits, and otherwise one local ref.
+5. Run all the project's checks on the combined result twice: before the comments, and at the end. After each security area, also run the checks that the project defines for security changes, if any. Run only one of these at a time.
+6. When they fail, find the area at fault. If its checks stay red, rebuild the combined result without it and without the areas that build on it, and report them. The other areas go on.
+7. Write one report (step 6 of the skill), with the checks on the combined result. List the worktrees that remain.
 
 ## Clean the comments
 
-The comments are an area of every project run, over all its code and test files. The other areas leave to it the comment step of step 3 and the second part of question 3 of the check. It has no rows for the user, and its commits change only comments, with one commit for each area of the project. Split it between subagents by directory, because directories do not overlap.
+The comments are an area of every project run, over all its code and test files. The other areas leave to it the comment step of step 3 and the second part of question 3 of the check. It has no rows for the user, and its commits change only comments, with one commit for each area of the project. Split it between subagents by directory, because directories do not overlap, and give each one its own worktree, because the proof in step 3 changes code for a moment.
 
 - Do not only rewrap a comment.
 - Do not change generated code, third-party code, or migrations that were already applied.
 - For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. A JSX comment, `{/* */}`, is a comment and not code, so leave it out on both sides, with the whitespace that JSX drops. Reject every file that differs.
+- This comparison does not see the comments in code that sits in a string, such as a `node -e` script or a heredoc. Compare that code separately, in its own language.
 - The independent check is question 3 alone.
