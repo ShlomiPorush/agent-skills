@@ -5,7 +5,7 @@ One request, one approval, and one report. The main agent splits the project int
 ## Survey and plan
 
 1. Split the project into areas, such as a feature or a subsystem. Look first where the history shows repeated fixes. Write the "must not weaken" list for the whole project.
-2. Have subagents scan the areas in parallel, read-only, with the definition, the comment leads, and the test of the skill, and the leads below. Each one returns the excessive mechanisms with their locations, the answers to the test, and the existing tests, a short Keep list, and all the comment leads of its area, not examples.
+2. Have subagents scan the areas in parallel, read-only, with the definition of the skill, the comment leads and the test of its step 2, and the leads below. Each one returns the excessive mechanisms with their locations, the answers to the test, and the existing tests, a short Keep list, and all the comment leads of its area, not examples.
 3. Merge the duplicates between the scans, and confirm in the code every claim that the plan rests on.
 4. Write one plan (step 2 of the skill) for all areas, ranked by the harm that the excess does (bugs and repeated fixes in the mechanism, states that leave a user stuck, code that is hard to change) against the risk of the change. Put verdicts that depend on each other in one area, so that they succeed or drop out together. Mark the security areas, and the areas that change the same files, the schema, or the migrations. Each security area is a row in the question to the user.
 
@@ -20,7 +20,6 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 - The same logic in two places, when keeping them matched has caused bugs.
 - One-time migration or repair code that still runs.
 - Checks for data that only a hand edit can produce.
-- A comment that excuses a weakness of our own code (step 2 of the skill).
 - Review ids in comments, which mark code that a review round added.
 - Squashed commits whose body records review rounds.
 
@@ -31,7 +30,7 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 3. Areas that change the same files, the schema, or the migrations do not run in parallel. Each one starts from the combined result so far. Security areas run after the others, then the comments, then the README.
 4. Combine the areas one by one. Keep one commit for each area if the user approved commits, and otherwise one local ref.
 5. Run all the project's checks on the combined result twice: before the comments, and at the end. After each security area, also run the checks that the project defines for security changes, if any. Run only one of these at a time.
-6. When they fail, find the area at fault. If its checks stay red, rebuild the combined result without it and without the areas that build on it, and report them. The other areas go on.
+6. When they fail, find the area at fault. For areas that fail only together, it is the last one. If the checks stay red, rebuild the combined result without it and without the areas that build on it, run the failed checks again, and report what you took out. The other areas go on.
 7. Write one report (step 6 of the skill), with the checks on the combined result. List the worktrees that remain.
 
 ## Clean the comments
@@ -40,6 +39,5 @@ The comments are an area of every project run, over all its code and test files.
 
 - Do not only rewrap a comment.
 - Do not change generated code, third-party code, or migrations that were already applied.
-- For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. A JSX comment, `{/* */}`, is a comment and not code, so leave it out on both sides, with the whitespace that JSX drops. Reject every file that differs.
-- This comparison does not see the comments in code that sits in a string, such as a `node -e` script or a heredoc. Compare that code separately, in its own language.
+- For every file, compare the code without comments before and after, by the tokens or the syntax tree of the language. Do not use a regex, because strings hold comment marks. A JSX comment, `{/* */}`, is a comment and not code, so leave it out on both sides, with the whitespace that JSX drops. Code in a string, such as a `node -e` script or a heredoc, is compared separately, without comments in its own language, and the outer comparison leaves out only its text. Reject every file that differs.
 - The independent check is question 3 alone.
