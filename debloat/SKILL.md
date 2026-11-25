@@ -53,7 +53,11 @@ If the request does not state the scope, look at the branch, the open pull reque
 
 ## 2. Plan the mechanisms
 
-Write the facts that the verdicts rest on, such as how many instances run or which risks the user already accepted. Then list the excessive mechanisms. Each one gets a number, its location, a verdict, and the answers to this test, in a sentence each:
+Write the facts that the verdicts rest on, such as how many instances run or which risks the user already accepted.
+
+Next, list every comment in the scope that excuses a weakness of our own code: an accepted risk, the safe side, rare, at most, can still, a moment later, must match, never happens, or an order that only the comment guards. Read for the meaning, not the words. A reason from outside the code, such as a platform, a library, a standard, a decision of the user, or a third-party bug, does not count. Each comment is a lead, not a verdict: ask which design would make it unnecessary. When a simpler one does, the mechanism goes through the test below, and the comment goes with it. Otherwise step 3 decides about the comment.
+
+Then list the excessive mechanisms. Each one gets a number, its location, a verdict, and the answers to this test, in a sentence each:
 
 1. Which problem does the mechanism solve, and what is its route to failure?
 2. What is the simple or common solution to that problem?
@@ -81,11 +85,13 @@ Write the plan to a file outside the tracked files. List the bugs that you saw s
 
 ## 3. Simplify once
 
-Carry out the approved verdicts. Keep the tests of kept behavior, and do not change what they assert. When the code proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
+Carry out the approved verdicts. When a verdict rests on how a library, a browser, or a database behaves, prove that behavior first in an experiment, unless you did so for the plan. Keep the tests of kept behavior, and do not change what they assert. When the code or an experiment proves a verdict wrong, correct the plan and go on. Stop only for a new product decision.
 
 Then clean the comments by the user's rule or by this one: no comments in code, which includes tests and doc comments. Two kinds stay. The first is text that a tool or a license requires in that place, such as a lint or type suppression, a shebang, a build flag, or text that a tool generates documentation from. The second is one line that says what would break, when the code looks like a mistake, changing it would break something, no test would fail, and no name can say it. Shorten a longer reason that meets these conditions to that line. Configuration files, environment files, and the settings section of a script are exempt: a comment there may explain a setting. Do not copy a comment into a document, or add code only to carry its reason.
 
-In a change, clean only the code that its diff or the run changed. A comment that excuses a weakness of our own code gets no exception: keep it only when it meets the rule, and report the weakness. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell whether the rule allows a comment, check the history of its line. If that does not settle it, delete the comment and report it.
+Prove "no test would fail": make the change that the line warns against, run the tests that cover the code, and restore it. When a test turns red because of it, delete the comment. When the file has no tests, say so in the report.
+
+In a change, clean only the code that its diff or the run changed. A comment that excuses a weakness of our own code gets no exception: keep it only when it meets the rule. Do not add one: an accepted risk is written in the plan and the report, not in the code. When you cannot tell whether the rule allows a comment, check the history of its line. If that does not settle it, delete the comment and report it.
 
 Run the project's checks and the partner's result review. Then save `refs/backup/<scope>-after` with the commands of step 1.
 
@@ -113,9 +119,9 @@ A correct finding is not a reason to add code. When only a new mechanism or a la
 ## 6. Report
 
 - Each excess that was resolved, how, and why that is safe. Name the accepted risks and their outcomes.
-- The number of mechanisms that changed, and the checks before and after.
+- The number of mechanisms that changed, and the checks before and after. Give no line counts in any form, not even the change size that `cross-review` reports.
 - Any approved change in what users see.
 - What the independent check found, and what was fixed.
 - Product decisions that wait for the user, and the bugs that were seen and not fixed.
-- What was not checked, what stayed open, the comments in doubt, the weaknesses that comments excused, and the over-engineering seen outside the scope.
+- What was not checked, what stayed open, the comments in doubt, the weaknesses that comments excused and that remain, and the over-engineering seen outside the scope.
 - The backup refs. They stay until the user approves the result.
