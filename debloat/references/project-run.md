@@ -30,7 +30,7 @@ Leads, not verdicts. Read the code and the commit that added it, because some of
 3. Areas that change the same files, the schema, or the migrations do not run in parallel. Each one starts from the combined result so far. Security areas run after the others, then the comments, then the README.
 4. Combine the areas one by one. Keep one commit for each area if the user approved commits, and otherwise one local ref.
 5. Run all the project's checks on the combined result twice: before the comments, and at the end. After each security area, also run the checks that the project defines for security changes, if any. Run only one of these at a time.
-6. When they fail, find the area at fault. For areas that fail only together, it is the last one. If the checks stay red, rebuild the combined result without it and without the areas that build on it, run the failed checks again, and report what you took out. The other areas go on.
+6. When they fail, find the area at fault. For areas that fail only together, it is the last one. If the checks stay red, rebuild the combined result without it and without the areas that build on it, run the same checks again, and report what you took out. The other areas go on.
 7. Write one report (step 6 of the skill), with the checks on the combined result. List the worktrees that remain.
 
 ## Clean the comments
